@@ -1,0 +1,10 @@
+.env
+*.pyc
+__pycache__/
+*.parquet
+logs/*.csv
+logs/*.log
+data/*_mock.parquet
+data/*.parquet
+.venv/
+venv/
