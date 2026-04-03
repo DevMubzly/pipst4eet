@@ -28,17 +28,17 @@ strategy:
   trend:
     ema_fast: 9
     ema_slow: 21
-    sl_pips: 10
-    tp_pips: 15
-    min_ema_separation_pct: 0.01
+    sl_pips: 20
+    tp_pips: 30
+    min_ema_separation_pct: 0.02
   mean_reversion:
-    rsi_period: 7
-    rsi_oversold: 25
-    rsi_overbought: 75
-    bb_period: 14
-    bb_std: 2.5
-    sl_pips: 10
-    tp_pips: 15
+    rsi_period: 14
+    rsi_oversold: 30
+    rsi_overbought: 70
+    bb_period: 20
+    bb_std: 2.0
+    sl_pips: 20
+    tp_pips: 30
 
 backtest:
   initial_balance: 10

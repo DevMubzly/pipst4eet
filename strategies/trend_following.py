@@ -7,7 +7,7 @@ class TrendFollowingStrategy:
         self.ema_slow = config["strategy"]["trend"]["ema_slow"]
         self.sl_pips = config["strategy"]["trend"]["sl_pips"]
         self.tp_pips = config["strategy"]["trend"]["tp_pips"]
-        self.min_ema_sep_pct = config["strategy"]["trend"].get("min_ema_separation_pct", 0.01)
+        self.min_ema_sep_pct = config["strategy"]["trend"].get("min_ema_separation_pct", 0.02)
 
         self.pip_sizes = {
             "XAUUSD": 0.01,
@@ -31,16 +31,8 @@ class TrendFollowingStrategy:
         tr2 = abs(high - close.shift(1))
         tr3 = abs(low - close.shift(1))
         tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-        atr = tr.rolling(window=14).mean()
-
-        plus_dm = high.diff()
-        minus_dm = -low.diff()
-        plus_dm[plus_dm < 0] = 0
-        minus_dm[minus_dm < 0] = 0
-        plus_di = 100 * (plus_dm.rolling(window=14).mean() / atr)
-        minus_di = 100 * (minus_dm.rolling(window=14).mean() / atr)
-        dx = 100 * abs(plus_di - minus_di) / (plus_di + minus_di)
-        df["adx"] = dx.rolling(window=14).mean()
+        df["atr"] = tr.rolling(window=14).mean()
+        df["atr_median"] = df["atr"].rolling(window=100).median()
 
         return df
 
@@ -51,7 +43,7 @@ class TrendFollowingStrategy:
         if open_positions_for_symbol:
             return None
 
-        if idx < self.ema_slow + 20:
+        if idx < self.ema_slow + 100:
             return None
 
         row = df.iloc[idx]
@@ -62,6 +54,10 @@ class TrendFollowingStrategy:
 
         if pd.notna(row.get("ema_separation_pct")) and row["ema_separation_pct"] < self.min_ema_sep_pct:
             return None
+
+        if pd.notna(row.get("atr")) and pd.notna(row.get("atr_median")):
+            if row["atr"] < row["atr_median"] * 0.8:
+                return None
 
         symbol = df["symbol"].iloc[0] if "symbol" in df.columns else "EURUSD"
         pip = self._pip_size(symbol)
