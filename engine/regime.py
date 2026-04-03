@@ -12,6 +12,7 @@ class RegimeDetector:
         self.bb_period = config["regime"]["bb_period"]
         self.bb_std = config["regime"]["bb_std"]
         self.confirmation = config["regime"]["confirmation_candles"]
+        self.atr_lookback = config["regime"]["atr_lookback"]
 
     def compute_atr(self, df, period=None):
         period = period or self.adx_period
@@ -47,13 +48,9 @@ class RegimeDetector:
 
     def compute_choppiness(self, df):
         period = self.chop_period
-        high = df["high"]
-        low = df["low"]
-        close = df["close"]
-
-        atr_sum = self.compute_atr(df, 1).rolling(window=period).sum()
-        price_range = high.rolling(window=period).max() - low.rolling(window=period).min()
-
+        atr_1 = self.compute_atr(df, 1)
+        atr_sum = atr_1.rolling(window=period).sum()
+        price_range = df["high"].rolling(window=period).max() - df["low"].rolling(window=period).min()
         chop = 100 * np.log10(atr_sum / price_range) / np.log10(period)
         return chop
 
@@ -61,8 +58,9 @@ class RegimeDetector:
         period = self.bb_period
         std = self.bb_std
         sma = df["close"].rolling(window=period).mean()
-        upper = sma + std * df["close"].rolling(window=period).std()
-        lower = sma - std * df["close"].rolling(window=period).std()
+        std_dev = df["close"].rolling(window=period).std()
+        upper = sma + std * std_dev
+        lower = sma - std * std_dev
         bb_width = (upper - lower) / sma
         return bb_width, upper, lower, sma
 
@@ -70,6 +68,7 @@ class RegimeDetector:
         adx = self.compute_adx(df)
         chop = self.compute_choppiness(df)
         bb_width, upper, lower, sma = self.compute_bb_width(df)
+        atr = self.compute_atr(df, self.adx_period)
 
         df = df.copy()
         df["adx"] = adx
@@ -78,20 +77,10 @@ class RegimeDetector:
         df["bb_upper"] = upper
         df["bb_lower"] = lower
         df["bb_sma"] = sma
-
-        trend_votes = 0
-        range_votes = 0
-
-        adx_trend = adx > self.adx_trend
-        adx_range = adx < self.adx_range
-        chop_trend = chop < self.chop_trend_thresh
-        chop_range = chop > self.chop_range_thresh
-
-        bb_expanding = bb_width > bb_width.shift(self.confirmation)
-        bb_contracting = bb_width < bb_width.shift(self.confirmation)
+        df["atr"] = atr
 
         for i in range(len(df)):
-            if i < self.adx_period * 2:
+            if i < self.adx_period * 3:
                 df.loc[df.index[i], "regime"] = "unknown"
                 continue
 
@@ -99,26 +88,37 @@ class RegimeDetector:
             range_votes = 0
 
             if adx.iloc[i] > self.adx_trend:
-                trend_votes += 1
+                trend_votes += 2
             elif adx.iloc[i] < self.adx_range:
+                range_votes += 2
+            elif adx.iloc[i] < 25:
                 range_votes += 1
 
             if chop.iloc[i] < self.chop_trend_thresh:
-                trend_votes += 1
+                trend_votes += 2
             elif chop.iloc[i] > self.chop_range_thresh:
+                range_votes += 2
+            elif chop.iloc[i] > 50:
                 range_votes += 1
 
-            if bb_expanding.iloc[i]:
-                trend_votes += 1
-            elif bb_contracting.iloc[i]:
-                range_votes += 1
+            bb_w = bb_width.iloc[i]
+            lookback_start = max(0, i - self.confirmation * 3)
+            bb_w_hist = bb_width.iloc[lookback_start:i]
+            if len(bb_w_hist) > 0:
+                bb_w_avg = bb_w_hist.mean()
+                if bb_w > bb_w_avg * 1.1:
+                    trend_votes += 1
+                elif bb_w < bb_w_avg * 0.9:
+                    range_votes += 1
 
-            if trend_votes >= 2:
+            if trend_votes >= 3:
                 regime = "trending"
-            elif range_votes >= 2:
+            elif range_votes >= 3:
                 regime = "ranging"
+            elif trend_votes >= range_votes:
+                regime = "weak_trend"
             else:
-                regime = "unknown"
+                regime = "weak_range"
 
             df.loc[df.index[i], "regime"] = regime
 

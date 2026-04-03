@@ -12,6 +12,7 @@ from strategies.trend_following import TrendFollowingStrategy
 from strategies.mean_reversion import MeanReversionStrategy
 from risk.manager import RiskManager
 from backtest.engine import BacktestEngine
+from backtest.walkforward import WalkForwardAnalyzer
 
 logger = setup_logger("bot")
 
@@ -160,9 +161,41 @@ def run_all_pairs(config, start_date, end_date, use_mock=False):
 
     return all_reports
 
+def run_walkforward(config, symbol, start_date, end_date, use_mock=False):
+    logger.info(f"Starting walk-forward: {symbol} | {start_date} to {end_date}")
+
+    if use_mock:
+        cache_path = f"data/{symbol}_{config['trading']['timeframe']}_mock.parquet"
+        if os.path.exists(cache_path):
+            df = pd.read_parquet(cache_path)
+        else:
+            df = generate_mock_ohlcv(symbol, config["trading"]["timeframe"], start_date, end_date, cache_path)
+    else:
+        fetcher = DataFetcher()
+        df = fetcher.fetch_and_cache(symbol, config["trading"]["timeframe"], start_date, end_date)
+
+    if df.empty:
+        logger.error(f"No data for {symbol}")
+        return
+
+    analyzer = WalkForwardAnalyzer(config)
+    results = analyzer.run(df)
+    return results
+
+def run_walkforward_all(config, start_date, end_date, use_mock=False):
+    pairs = config["trading"]["pairs"]
+    all_results = {}
+
+    for symbol in pairs:
+        results = run_walkforward(config, symbol, start_date, end_date, use_mock)
+        if results:
+            all_results[symbol] = results
+
+    return all_results
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Pipst4eet Trading Bot")
-    parser.add_argument("--mode", choices=["backtest", "live"], default="backtest")
+    parser.add_argument("--mode", choices=["backtest", "live", "walkforward"], default="backtest")
     parser.add_argument("--symbol", default=None, help="Single pair to test (e.g. XAUUSD)")
     parser.add_argument("--start", default=None, help="Start date YYYY-MM-DD")
     parser.add_argument("--end", default=None, help="End date YYYY-MM-DD")
@@ -179,5 +212,13 @@ if __name__ == "__main__":
             run_backtest(config, args.symbol, start_date, end_date, use_mock=args.mock)
         else:
             run_all_pairs(config, start_date, end_date, use_mock=args.mock)
+    elif args.mode == "walkforward":
+        end_date = args.end or datetime.now().strftime("%Y-%m-%d")
+        start_date = args.start or (datetime.now() - timedelta(days=730)).strftime("%Y-%m-%d")
+
+        if args.symbol:
+            run_walkforward(config, args.symbol, start_date, end_date, use_mock=args.mock)
+        else:
+            run_walkforward_all(config, start_date, end_date, use_mock=args.mock)
     elif args.mode == "live":
         logger.info("Live mode not yet implemented. Run backtest first.")

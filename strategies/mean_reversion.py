@@ -27,6 +27,7 @@ class MeanReversionStrategy:
         df["bb_upper"] = sma + self.bb_std * std
         df["bb_lower"] = sma - self.bb_std * std
         df["bb_sma"] = sma
+        df["bb_pct"] = (df["close"] - df["bb_lower"]) / (df["bb_upper"] - df["bb_lower"])
 
         high = df["high"]
         low = df["low"]
@@ -48,30 +49,35 @@ class MeanReversionStrategy:
 
         row = df.iloc[idx]
         prev_row = df.iloc[idx - 1]
-        prev2_row = df.iloc[idx - 2]
 
         if pd.isna(row.get("atr")) or pd.isna(row.get("rsi")):
             return None
 
-        if pd.isna(row.get("regime")) or row["regime"] != "ranging":
+        if pd.isna(row.get("regime")):
             return None
 
-        touched_lower = row["low"] <= row["bb_lower"] or prev_row["low"] <= prev_row["bb_lower"]
-        rsi_recovering = row["rsi"] > self.rsi_oversold and prev_row["rsi"] <= self.rsi_oversold
+        if row["regime"] not in ("ranging",):
+            return None
 
-        if touched_lower and rsi_recovering:
-            atr = row["atr"]
-            sl = row["close"] - (atr * self.atr_sl_mult)
-            tp = row["bb_sma"]
+        close_val = row["close"]
+        atr = row["atr"]
+
+        rsi_cross_up = prev_row["rsi"] <= self.rsi_oversold and row["rsi"] > self.rsi_oversold
+        touched_bb_lower = row["low"] <= row["bb_lower"] or prev_row["low"] <= prev_row["bb_lower"]
+        bb_pct_low = row.get("bb_pct", 0.5) < 0.15
+
+        if rsi_cross_up and (touched_bb_lower or bb_pct_low):
+            sl = close_val - (atr * self.atr_sl_mult)
+            tp = close_val + (atr * self.atr_tp_mult)
             return {"direction": "buy", "sl": sl, "tp": tp, "reason": "mr_oversold"}
 
-        touched_upper = row["high"] >= row["bb_upper"] or prev_row["high"] >= prev_row["bb_upper"]
-        rsi_declining = row["rsi"] < self.rsi_overbought and prev_row["rsi"] >= self.rsi_overbought
+        rsi_cross_down = prev_row["rsi"] >= self.rsi_overbought and row["rsi"] < self.rsi_overbought
+        touched_bb_upper = row["high"] >= row["bb_upper"] or prev_row["high"] >= prev_row["bb_upper"]
+        bb_pct_high = row.get("bb_pct", 0.5) > 0.85
 
-        if touched_upper and rsi_declining:
-            atr = row["atr"]
-            sl = row["close"] + (atr * self.atr_sl_mult)
-            tp = row["bb_sma"]
+        if rsi_cross_down and (touched_bb_upper or bb_pct_high):
+            sl = close_val + (atr * self.atr_sl_mult)
+            tp = close_val - (atr * self.atr_tp_mult)
             return {"direction": "sell", "sl": sl, "tp": tp, "reason": "mr_overbought"}
 
         return None

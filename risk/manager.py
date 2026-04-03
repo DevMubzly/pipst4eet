@@ -5,8 +5,10 @@ class RiskManager:
         self.daily_loss_usd = config["risk"]["daily_loss_limit_usd"]
         self.max_open = config["risk"]["max_open_positions"]
         self.max_daily_trades = config["risk"]["max_daily_trades"]
+        self.trailing_drawdown_pct = config["risk"].get("trailing_drawdown_pct", None)
         self.lot_sizes = config["lots"]
         self.balance = balance
+        self.peak_balance = balance
         self.daily_pnl = 0.0
         self.daily_trades = 0
         self.open_positions = 0
@@ -55,6 +57,11 @@ class RiskManager:
         if self.daily_loss_usd and self.daily_pnl <= -self.daily_loss_usd:
             self.killed = True
             return False
+        if self.trailing_drawdown_pct:
+            dd_from_peak = (self.peak_balance - self.balance) / self.peak_balance
+            if dd_from_peak >= self.trailing_drawdown_pct / 100:
+                self.killed = True
+                return False
         return True
 
     def record_trade_result(self, pnl):
@@ -62,8 +69,16 @@ class RiskManager:
         self.daily_trades += 1
         self.balance += pnl
 
+        if self.balance > self.peak_balance:
+            self.peak_balance = self.balance
+
         if self.daily_loss_pct and self.daily_pnl <= -(self.balance * self.daily_loss_pct / 100):
             self.killed = True
+
+        if self.trailing_drawdown_pct:
+            dd_from_peak = (self.peak_balance - self.balance) / self.peak_balance
+            if dd_from_peak >= self.trailing_drawdown_pct / 100:
+                self.killed = True
 
     def open_position(self):
         self.open_positions += 1

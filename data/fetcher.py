@@ -1,4 +1,5 @@
 import os
+import time
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -8,6 +9,16 @@ from twelvedata import TDClient
 from dotenv import load_dotenv
 
 load_dotenv()
+
+def get_api_key():
+    key = os.getenv("TWELVEDATA_API_KEY")
+    if key:
+        return key
+    key = os.getenv("twelvedata-api-key")
+    if key:
+        return key
+    key = os.getenv("TWELVEDATA-API-KEY")
+    return key
 
 DATA_DIR = Path(__file__).parent.parent / "data"
 DATA_DIR.mkdir(exist_ok=True)
@@ -33,7 +44,7 @@ SYMBOL_MAP = {
 
 class DataFetcher:
     def __init__(self, api_key=None):
-        self.api_key = api_key or os.getenv("TWELVEDATA_API_KEY")
+        self.api_key = api_key or get_api_key()
         self.client = TDClient(apikey=self.api_key)
 
     def _get_td_symbol(self, symbol):
@@ -46,34 +57,60 @@ class DataFetcher:
         td_symbol = self._get_td_symbol(symbol)
         interval = self._get_td_interval(timeframe)
 
-        ts = TDClient(apikey=self.api_key)
-        params = {
-            "symbol": td_symbol,
-            "interval": interval,
-            "start_date": start_date,
-            "end_date": end_date,
-            "outputsize": 5000,
-        }
+        start = pd.Timestamp(start_date)
+        end = pd.Timestamp(end_date)
 
-        try:
-            series = ts.time_series(**params).as_pandas()
-        except Exception as e:
-            raise Exception(f"Failed to fetch {symbol}: {e}")
+        all_frames = []
+        chunk_end = end
+
+        while chunk_end > start:
+            chunk_start = max(start, chunk_end - pd.Timedelta(days=180))
+
+            ts = TDClient(apikey=self.api_key)
+            params = {
+                "symbol": td_symbol,
+                "interval": interval,
+                "start_date": chunk_start.strftime("%Y-%m-%d"),
+                "end_date": chunk_end.strftime("%Y-%m-%d"),
+                "outputsize": 5000,
+            }
+
+            try:
+                series = ts.time_series(**params).as_pandas()
+            except Exception as e:
+                raise Exception(f"Failed to fetch {symbol} ({chunk_start} to {chunk_end}): {e}")
+
+            if series is not None and not series.empty:
+                all_frames.append(series)
+
+            chunk_end = chunk_start - pd.Timedelta(seconds=1)
+
+            if chunk_end > start:
+                time.sleep(12)
+
+        if not all_frames:
+            return pd.DataFrame()
+
+        series = pd.concat(all_frames)
 
         if series is None or series.empty:
             return pd.DataFrame()
 
-        series = series.rename(columns={
-            "open": "open",
-            "high": "high",
-            "low": "low",
-            "close": "close",
-            "volume": "volume",
-        })
-
         series.index = pd.to_datetime(series.index)
-        series = series[["open", "high", "low", "close", "volume"]]
+
+        required_cols = ["open", "high", "low", "close"]
+        for col in required_cols:
+            if col not in series.columns:
+                raise Exception(f"Missing required column: {col}. Got: {list(series.columns)}")
+
+        if "volume" in series.columns:
+            series = series[["open", "high", "low", "close", "volume"]]
+        else:
+            series = series[["open", "high", "low", "close"]]
+            series["volume"] = 0
+
         series["symbol"] = symbol
+        series = series.sort_index()
 
         return series
 
