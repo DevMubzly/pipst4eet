@@ -1,0 +1,67 @@
+trading:
+  pairs:
+    - XAUUSD
+    - EURUSD
+    - GBPUSD
+    - USDJPY
+    - GBPJPY
+    - AUDUSD
+  timeframe: "15m"
+  session_start: "09:00"
+  session_end: "19:00"
+  timezone: "UTC+3"
+  close_positions_before: "18:55"
+
+risk:
+  risk_per_trade_pct: 1.0
+  daily_loss_limit_pct: 3.0
+  daily_loss_limit_usd: null
+  max_open_positions: 2
+  max_daily_trades: 10
+
+lots:
+  XAUUSD: 0.01
+  EURUSD: 0.10
+  GBPUSD: 0.10
+  USDJPY: 0.10
+  GBPJPY: 0.05
+  AUDUSD: 0.10
+
+regime:
+  adx_period: 14
+  adx_trend_threshold: 25
+  adx_range_threshold: 20
+  choppiness_period: 14
+  chop_range_threshold: 61.8
+  chop_trend_threshold: 38.2
+  bb_period: 20
+  bb_std: 2.0
+  confirmation_candles: 3
+
+strategy:
+  trend:
+    ema_fast: 9
+    ema_slow: 21
+    atr_period: 14
+    atr_sl_mult: 1.5
+    atr_tp_mult: 2.5
+  mean_reversion:
+    rsi_period: 14
+    rsi_oversold: 30
+    rsi_overbought: 70
+    bb_period: 20
+    bb_std: 2.0
+    atr_period: 14
+    atr_sl_mult: 1.5
+    atr_tp_mult: 2.0
+
+backtest:
+  initial_balance: 10000
+  walk_forward_train_months: 6
+  walk_forward_test_months: 2
+  monte_carlo_iterations: 1000
+
+execution:
+  mode: "demo"
+  magic_number: 741852
+  slippage_tolerance: 3
