@@ -86,7 +86,7 @@ class DataFetcher:
             chunk_end = chunk_start - pd.Timedelta(seconds=1)
 
             if chunk_end > start:
-                time.sleep(12)
+                time.sleep(15)
 
         if not all_frames:
             return pd.DataFrame()
@@ -147,3 +147,8 @@ class DataFetcher:
 
         self.save_to_parquet(df, symbol, timeframe)
         return df
+
+    def fetch_multi_timeframe(self, symbol, low_tf, high_tf, start_date, end_date):
+        low_df = self.fetch_and_cache(symbol, low_tf, start_date, end_date)
+        high_df = self.fetch_and_cache(symbol, high_tf, start_date, end_date)
+        return low_df, high_df

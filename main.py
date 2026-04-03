@@ -7,7 +7,6 @@ from utils.config import load_config
 from utils.logger import setup_logger
 from data.fetcher import DataFetcher
 from data.mock_data import generate_mock_ohlcv
-from engine.regime import RegimeDetector
 from strategies.trend_following import TrendFollowingStrategy
 from strategies.mean_reversion import MeanReversionStrategy
 from risk.manager import RiskManager
@@ -79,19 +78,21 @@ def print_report(symbol, report, df, config, data_source):
 def run_backtest(config, symbol, start_date, end_date, use_mock=False):
     logger.info(f"Starting backtest: {symbol} | {start_date} to {end_date}")
 
+    low_tf = config["trading"]["timeframe"]
+
     if use_mock:
-        cache_path = f"data/{symbol}_{config['trading']['timeframe']}_mock.parquet"
+        cache_path = f"data/{symbol}_{low_tf}_mock.parquet"
         if os.path.exists(cache_path):
             df = pd.read_parquet(cache_path)
             logger.info(f"Loaded cached mock data for {symbol}: {len(df)} candles")
             data_source = "Mock Data (Cached)"
         else:
-            df = generate_mock_ohlcv(symbol, config["trading"]["timeframe"], start_date, end_date, cache_path)
+            df = generate_mock_ohlcv(symbol, low_tf, start_date, end_date, cache_path)
             logger.info(f"Generated mock data for {symbol}: {len(df)} candles")
             data_source = "Mock Data (Generated)"
     else:
         fetcher = DataFetcher()
-        df = fetcher.fetch_and_cache(symbol, config["trading"]["timeframe"], start_date, end_date)
+        df = fetcher.fetch_and_cache(symbol, low_tf, start_date, end_date)
         data_source = "Twelve Data API"
 
     if df.empty:
@@ -100,7 +101,6 @@ def run_backtest(config, symbol, start_date, end_date, use_mock=False):
 
     logger.info(f"Loaded {len(df)} candles for {symbol}")
 
-    regime_detector = RegimeDetector(config)
     trend_strategy = TrendFollowingStrategy(config)
     mr_strategy = MeanReversionStrategy(config)
 
@@ -108,7 +108,7 @@ def run_backtest(config, symbol, start_date, end_date, use_mock=False):
     risk_manager = RiskManager(config, initial_balance)
 
     engine = BacktestEngine(config)
-    report = engine.run(df, risk_manager, regime_detector, trend_strategy, mr_strategy)
+    report = engine.run(df, risk_manager, None, trend_strategy, mr_strategy)
 
     print_report(symbol, report, df, config, data_source)
 
@@ -156,6 +156,25 @@ def run_all_pairs(config, start_date, end_date, use_mock=False):
     print(f"  {'-'*10} {'-'*7} {'-'*7} {'-'*12} {'-'*7} {'-'*5}")
     for sym, r in all_reports.items():
         print(f"  {sym:<10} {r['total_trades']:>7} {r['win_rate']:>6.1f}% ${r['total_pnl']:>10,.2f} {r['max_drawdown']:>6.1f}% {r['profit_factor']:>5.2f}")
+
+    print("")
+    print("  COMPOUNDING PROJECTION (all 3 pairs combined)")
+    print(f"  {'='*68}")
+    initial = config["backtest"]["initial_balance"]
+    total_return_pct = (total_pnl / initial) * 100
+    months_in_data = 12
+    monthly_return_pct = total_return_pct / months_in_data
+    monthly_mult = 1 + (monthly_return_pct / 100)
+
+    print(f"  {'Month':<8} {'Balance':>12} {'Monthly Return':>16}")
+    print(f"  {'-'*8} {'-'*12} {'-'*16}")
+    balance = initial
+    for m in range(1, 13):
+        balance *= monthly_mult
+        print(f"  {m:<8} ${balance:>10,.2f} {monthly_return_pct:>14.1f}%")
+
+    print(f"\n  $10 -> ${balance:,.2f} in 12 months ({monthly_return_pct:.1f}% monthly return)")
+    print(f"  Note: Linear projection based on 2024 data. Real results will vary.")
     print("=" * 70)
     print("")
 

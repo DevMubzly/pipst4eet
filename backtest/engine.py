@@ -1,7 +1,5 @@
 import pandas as pd
 import numpy as np
-from datetime import datetime
-from collections import defaultdict
 
 class Trade:
     def __init__(self, symbol, direction, entry_price, entry_time, sl, tp, lot_size, reason):
@@ -98,7 +96,6 @@ class BacktestEngine:
         session_start = self.config["trading"]["session_start"]
         session_end = self.config["trading"]["session_end"]
 
-        df = regime_detector.detect_regime(df)
         df = trend_strategy.compute_indicators(df)
         df = mr_strategy.compute_indicators(df)
 
@@ -178,35 +175,17 @@ class BacktestEngine:
 
         if not closed_trades:
             return {
-                "total_trades": 0,
-                "winning_trades": 0,
-                "losing_trades": 0,
-                "win_rate": 0,
-                "total_pnl": 0,
-                "total_pips": 0,
-                "gross_profit": 0,
-                "gross_loss": 0,
-                "profit_factor": 0,
-                "avg_win": 0,
-                "avg_loss": 0,
-                "largest_win": 0,
-                "largest_loss": 0,
-                "max_drawdown": 0,
-                "max_drawdown_usd": 0,
-                "sharpe_ratio": 0,
-                "sortino_ratio": 0,
-                "final_balance": self.balance,
-                "return_pct": 0,
-                "trend_trades": 0,
-                "trend_wins": 0,
-                "mr_trades": 0,
-                "mr_wins": 0,
-                "sl_hits": 0,
-                "tp_hits": 0,
-                "session_closes": 0,
-                "avg_holding_time": "N/A",
-                "consecutive_losses": 0,
-                "recovery_factor": 0,
+                "total_trades": 0, "winning_trades": 0, "losing_trades": 0,
+                "win_rate": 0, "total_pnl": 0, "total_pips": 0,
+                "gross_profit": 0, "gross_loss": 0, "profit_factor": 0,
+                "avg_win": 0, "avg_loss": 0, "largest_win": 0, "largest_loss": 0,
+                "max_drawdown": 0, "max_drawdown_usd": 0,
+                "sharpe_ratio": 0, "sortino_ratio": 0,
+                "final_balance": self.balance, "return_pct": 0,
+                "trend_trades": 0, "trend_wins": 0, "trend_win_rate": 0,
+                "mr_trades": 0, "mr_wins": 0, "mr_win_rate": 0,
+                "sl_hits": 0, "tp_hits": 0, "session_closes": 0,
+                "avg_holding_time": "N/A", "consecutive_losses": 0, "recovery_factor": 0,
             }
 
         wins = [t for t in closed_trades if t.pnl > 0]
