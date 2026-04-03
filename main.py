@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 
 from utils.config import load_config
 from utils.logger import setup_logger
+from utils.notifications import alert_backtest_report
 from data.fetcher import DataFetcher
 from data.mock_data import generate_mock_ohlcv
 from strategies.trend_following import TrendFollowingStrategy
@@ -12,6 +13,7 @@ from strategies.mean_reversion import MeanReversionStrategy
 from risk.manager import RiskManager
 from backtest.engine import BacktestEngine
 from backtest.walkforward import WalkForwardAnalyzer
+from execution.live_bot import LiveBot
 
 logger = setup_logger("bot")
 
@@ -111,6 +113,8 @@ def run_backtest(config, symbol, start_date, end_date, use_mock=False):
     report = engine.run(df, risk_manager, None, trend_strategy, mr_strategy)
 
     print_report(symbol, report, df, config, data_source)
+
+    alert_backtest_report(report, symbol)
 
     trades_data = [t.to_dict() for t in engine.trades]
     if trades_data:
@@ -231,6 +235,10 @@ if __name__ == "__main__":
             run_backtest(config, args.symbol, start_date, end_date, use_mock=args.mock)
         else:
             run_all_pairs(config, start_date, end_date, use_mock=args.mock)
+    elif args.mode == "live":
+        bot = LiveBot(config)
+        if bot.connect():
+            bot.run()
     elif args.mode == "walkforward":
         end_date = args.end or datetime.now().strftime("%Y-%m-%d")
         start_date = args.start or (datetime.now() - timedelta(days=730)).strftime("%Y-%m-%d")

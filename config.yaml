@@ -50,3 +50,7 @@ execution:
   mode: "demo"
   magic_number: 741852
   slippage_tolerance: 3
+
+telegram:
+  bot_token: "YOUR_BOT_TOKEN"
+  chat_id: "YOUR_CHAT_ID"
