@@ -92,12 +92,15 @@ class BacktestEngine:
         self.open_trades = []
         self.equity_curve = []
 
-    def run(self, df, risk_manager, regime_detector, trend_strategy, mr_strategy):
+    def run(self, df, risk_manager, regime_detector, trend_strategy, mr_strategy, smc_strategy=None):
         session_start = self.config["trading"]["session_start"]
         session_end = self.config["trading"]["session_end"]
 
         df = trend_strategy.compute_indicators(df)
         df = mr_strategy.compute_indicators(df)
+
+        if smc_strategy is not None:
+            df = smc_strategy.compute_indicators(df)
 
         symbol = df["symbol"].iloc[0] if "symbol" in df.columns else "EURUSD"
 
@@ -119,7 +122,12 @@ class BacktestEngine:
             if risk_manager.can_open_trade():
                 has_open = any(t.is_open for t in self.open_trades if t.symbol == symbol)
 
-                signal = trend_strategy.generate_signal(df, i, has_open)
+                signal = None
+                if smc_strategy is not None:
+                    signal = smc_strategy.generate_signal(df, i, has_open)
+
+                if signal is None:
+                    signal = trend_strategy.generate_signal(df, i, has_open)
                 if signal is None:
                     signal = mr_strategy.generate_signal(df, i, has_open)
 

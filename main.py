@@ -10,6 +10,7 @@ from data.fetcher import DataFetcher
 from data.mock_data import generate_mock_ohlcv
 from strategies.trend_following import TrendFollowingStrategy
 from strategies.mean_reversion import MeanReversionStrategy
+from strategies.smc_sweep import SMCSweepStrategy
 from risk.manager import RiskManager
 from backtest.engine import BacktestEngine
 from backtest.walkforward import WalkForwardAnalyzer
@@ -17,80 +18,16 @@ from execution.live_bot import LiveBot
 
 logger = setup_logger("bot")
 
-def print_report(symbol, report, df, config, data_source):
-    print("")
-    print("=" * 70)
-    print(f"  BACKTEST REPORT: {symbol}")
-    print("=" * 70)
-
-    print("")
-    print("  DATA & SETTINGS")
-    print(f"  {'Source:':<30} {data_source}")
-    print(f"  {'Timeframe:':<30} {config['trading']['timeframe']}")
-    print(f"  {'Data Start:':<30} {df.index.min()}")
-    print(f"  {'Data End:':<30} {df.index.max()}")
-    print(f"  {'Total Candles:':<30} {len(df):,}")
-    print(f"  {'Trading Session:':<30} {config['trading']['session_start']} - {config['trading']['session_end']} (UTC+3)")
-    print(f"  {'Initial Balance:':<30} ${config['backtest']['initial_balance']:,.2f}")
-    print(f"  {'Risk Per Trade:':<30} {config['risk']['risk_per_trade_pct']}%")
-    print(f"  {'Daily Loss Limit:':<30} {config['risk']['daily_loss_limit_pct']}%")
-
-    print("")
-    print("  PERFORMANCE")
-    print(f"  {'Total Trades:':<30} {report['total_trades']}")
-    print(f"  {'Winning / Losing:':<30} {report['winning_trades']} / {report['losing_trades']}")
-    print(f"  {'Win Rate:':<30} {report['win_rate']}%")
-    print(f"  {'Total PnL:':<30} ${report['total_pnl']:,.2f}")
-    print(f"  {'Total Pips:':<30} {report['total_pips']}")
-    print(f"  {'Return:':<30} {report['return_pct']}%")
-    print(f"  {'Final Balance:':<30} ${report['final_balance']:,.2f}")
-
-    print("")
-    print("  RISK METRICS")
-    print(f"  {'Max Drawdown:':<30} {report['max_drawdown']}% (${report['max_drawdown_usd']:,.2f})")
-    print(f"  {'Sharpe Ratio:':<30} {report['sharpe_ratio']}")
-    print(f"  {'Sortino Ratio:':<30} {report['sortino_ratio']}")
-    print(f"  {'Profit Factor:':<30} {report['profit_factor']}")
-    print(f"  {'Recovery Factor:':<30} {report['recovery_factor']}")
-    print(f"  {'Consecutive Losses:':<30} {report['consecutive_losses']}")
-
-    print("")
-    print("  TRADE DETAILS")
-    print(f"  {'Gross Profit:':<30} ${report['gross_profit']:,.2f}")
-    print(f"  {'Gross Loss:':<30} ${report['gross_loss']:,.2f}")
-    print(f"  {'Avg Win:':<30} ${report['avg_win']:,.2f}")
-    print(f"  {'Avg Loss:':<30} ${report['avg_loss']:,.2f}")
-    print(f"  {'Largest Win:':<30} ${report['largest_win']:,.2f}")
-    print(f"  {'Largest Loss:':<30} ${report['largest_loss']:,.2f}")
-    print(f"  {'Avg Holding Time:':<30} {report['avg_holding_time']}")
-
-    print("")
-    print("  STRATEGY BREAKDOWN")
-    print(f"  {'Trend-Following Trades:':<30} {report['trend_trades']} (Win Rate: {report['trend_win_rate']}%)")
-    print(f"  {'Mean-Reversion Trades:':<30} {report['mr_trades']} (Win Rate: {report['mr_win_rate']}%)")
-
-    print("")
-    print("  EXIT REASONS")
-    print(f"  {'Stop Loss Hits:':<30} {report['sl_hits']}")
-    print(f"  {'Take Profit Hits:':<30} {report['tp_hits']}")
-    print(f"  {'Session Closes:':<30} {report['session_closes']}")
-    print("=" * 70)
-    print("")
-
-def run_backtest(config, symbol, start_date, end_date, use_mock=False):
-    logger.info(f"Starting backtest: {symbol} | {start_date} to {end_date}")
-
+def run_backtest_single(config, symbol, start_date, end_date, use_mock=False, strategy_mode="all"):
     low_tf = config["trading"]["timeframe"]
 
     if use_mock:
         cache_path = f"data/{symbol}_{low_tf}_mock.parquet"
         if os.path.exists(cache_path):
             df = pd.read_parquet(cache_path)
-            logger.info(f"Loaded cached mock data for {symbol}: {len(df)} candles")
             data_source = "Mock Data (Cached)"
         else:
             df = generate_mock_ohlcv(symbol, low_tf, start_date, end_date, cache_path)
-            logger.info(f"Generated mock data for {symbol}: {len(df)} candles")
             data_source = "Mock Data (Generated)"
     else:
         fetcher = DataFetcher()
@@ -98,154 +35,111 @@ def run_backtest(config, symbol, start_date, end_date, use_mock=False):
         data_source = "Twelve Data API"
 
     if df.empty:
-        logger.error(f"No data fetched for {symbol}")
-        return
+        return None
 
-    logger.info(f"Loaded {len(df)} candles for {symbol}")
-
-    trend_strategy = TrendFollowingStrategy(config)
-    mr_strategy = MeanReversionStrategy(config)
+    trend = TrendFollowingStrategy(config)
+    mr = MeanReversionStrategy(config)
+    smc = SMCSweepStrategy(config)
 
     initial_balance = config["backtest"]["initial_balance"]
-    risk_manager = RiskManager(config, initial_balance)
-
+    risk = RiskManager(config, initial_balance)
     engine = BacktestEngine(config)
-    report = engine.run(df, risk_manager, None, trend_strategy, mr_strategy)
 
-    print_report(symbol, report, df, config, data_source)
-
-    alert_backtest_report(report, symbol)
-
-    trades_data = [t.to_dict() for t in engine.trades]
-    if trades_data:
-        trades_df = pd.DataFrame(trades_data)
-        output_path = f"logs/{symbol}_trades.csv"
-        trades_df.to_csv(output_path, index=False)
-        logger.info(f"Trade log saved to {output_path}")
-
-    return report
-
-def run_all_pairs(config, start_date, end_date, use_mock=False):
-    pairs = config["trading"]["pairs"]
-    all_reports = {}
-
-    for symbol in pairs:
-        report = run_backtest(config, symbol, start_date, end_date, use_mock)
-        if report:
-            all_reports[symbol] = report
-
-    print("")
-    print("=" * 70)
-    print("  AGGREGATE RESULTS (All Pairs)")
-    print("=" * 70)
-
-    total_trades = sum(r["total_trades"] for r in all_reports.values())
-    total_pnl = sum(r["total_pnl"] for r in all_reports.values())
-    total_wins = sum(r["winning_trades"] for r in all_reports.values())
-    avg_win_rate = (total_wins / total_trades * 100) if total_trades > 0 else 0
-    max_dd = max(r["max_drawdown"] for r in all_reports.values()) if all_reports else 0
-    best_pair = max(all_reports, key=lambda x: all_reports[x]["total_pnl"]) if all_reports else "N/A"
-    worst_pair = min(all_reports, key=lambda x: all_reports[x]["total_pnl"]) if all_reports else "N/A"
-
-    print(f"  {'Total Trades:':<30} {total_trades}")
-    print(f"  {'Total PnL:':<30} ${total_pnl:,.2f}")
-    print(f"  {'Overall Win Rate:':<30} {avg_win_rate:.1f}%")
-    print(f"  {'Worst Max DD:':<30} {max_dd}%")
-    print(f"  {'Best Pair:':<30} {best_pair} (${all_reports[best_pair]['total_pnl']:,.2f})")
-    print(f"  {'Worst Pair:':<30} {worst_pair} (${all_reports[worst_pair]['total_pnl']:,.2f})")
-
-    print("")
-    print("  Per-Pair Summary:")
-    print(f"  {'Pair':<10} {'Trades':>7} {'Win%':>7} {'PnL':>12} {'DD%':>7} {'PF':>5}")
-    print(f"  {'-'*10} {'-'*7} {'-'*7} {'-'*12} {'-'*7} {'-'*5}")
-    for sym, r in all_reports.items():
-        print(f"  {sym:<10} {r['total_trades']:>7} {r['win_rate']:>6.1f}% ${r['total_pnl']:>10,.2f} {r['max_drawdown']:>6.1f}% {r['profit_factor']:>5.2f}")
-
-    print("")
-    print("  COMPOUNDING PROJECTION (all 3 pairs combined)")
-    print(f"  {'='*68}")
-    initial = config["backtest"]["initial_balance"]
-    total_return_pct = (total_pnl / initial) * 100
-    months_in_data = 12
-    monthly_return_pct = total_return_pct / months_in_data
-    monthly_mult = 1 + (monthly_return_pct / 100)
-
-    print(f"  {'Month':<8} {'Balance':>12} {'Monthly Return':>16}")
-    print(f"  {'-'*8} {'-'*12} {'-'*16}")
-    balance = initial
-    for m in range(1, 13):
-        balance *= monthly_mult
-        print(f"  {m:<8} ${balance:>10,.2f} {monthly_return_pct:>14.1f}%")
-
-    print(f"\n  $10 -> ${balance:,.2f} in 12 months ({monthly_return_pct:.1f}% monthly return)")
-    print(f"  Note: Linear projection based on 2024 data. Real results will vary.")
-    print("=" * 70)
-    print("")
-
-    return all_reports
-
-def run_walkforward(config, symbol, start_date, end_date, use_mock=False):
-    logger.info(f"Starting walk-forward: {symbol} | {start_date} to {end_date}")
-
-    if use_mock:
-        cache_path = f"data/{symbol}_{config['trading']['timeframe']}_mock.parquet"
-        if os.path.exists(cache_path):
-            df = pd.read_parquet(cache_path)
-        else:
-            df = generate_mock_ohlcv(symbol, config["trading"]["timeframe"], start_date, end_date, cache_path)
+    if strategy_mode == "smc":
+        engine.run(df, risk, None, trend, mr, smc)
+        engine.trades = [t for t in engine.trades if t.reason.startswith("smc")]
+    elif strategy_mode == "ema":
+        dummy_smc = type("X", (), {"compute_indicators": lambda s, df: df, "generate_signal": lambda s, df, i, o, h=None: None})()
+        dummy_mr = type("X", (), {"compute_indicators": lambda s, df: df, "generate_signal": lambda s, df, i, o, h=None: None})()
+        engine.run(df, risk, None, trend, dummy_mr, dummy_smc)
+    elif strategy_mode == "mr":
+        dummy_smc = type("X", (), {"compute_indicators": lambda s, df: df, "generate_signal": lambda s, df, i, o, h=None: None})()
+        dummy_trend = type("X", (), {"compute_indicators": lambda s, df: df, "generate_signal": lambda s, df, i, o, h=None: None})()
+        engine.run(df, risk, None, dummy_trend, mr, dummy_smc)
     else:
-        fetcher = DataFetcher()
-        df = fetcher.fetch_and_cache(symbol, config["trading"]["timeframe"], start_date, end_date)
+        engine.run(df, risk, None, trend, mr, smc)
 
-    if df.empty:
-        logger.error(f"No data for {symbol}")
-        return
+    return engine.generate_report()
 
-    analyzer = WalkForwardAnalyzer(config)
-    results = analyzer.run(df)
+def run_comparison(config, symbol, start_date, end_date, use_mock=False):
+    print(f"\n{'='*70}")
+    print(f"  STRATEGY COMPARISON: {symbol}")
+    print(f"  Period: {start_date} to {end_date}")
+    print(f"{'='*70}")
+
+    results = {}
+    for mode in ["smc", "ema", "mr", "all"]:
+        r = run_backtest_single(config, symbol, start_date, end_date, use_mock, mode)
+        if r:
+            results[mode] = r
+
+    print(f"\n  {'Strategy':<12} {'Trades':>6} {'Win%':>6} {'PnL':>10} {'DD%':>7} {'PF':>5}")
+    print(f"  {'-'*12} {'-'*6} {'-'*6} {'-'*10} {'-'*7} {'-'*5}")
+    for mode in ["smc", "ema", "mr", "all"]:
+        if mode in results:
+            r = results[mode]
+            print(f"  {mode.upper():<12} {r['total_trades']:>6} {r['win_rate']:>5.1f}% ${r['total_pnl']:>8,.2f} {r['max_drawdown']:>6.1f}% {r['profit_factor']:>5.2f}")
+    print(f"{'='*70}")
+
     return results
 
-def run_walkforward_all(config, start_date, end_date, use_mock=False):
+def run_all_pairs_comparison(config, start_date, end_date, use_mock=False):
     pairs = config["trading"]["pairs"]
     all_results = {}
 
     for symbol in pairs:
-        results = run_walkforward(config, symbol, start_date, end_date, use_mock)
-        if results:
-            all_results[symbol] = results
+        results = run_comparison(config, symbol, start_date, end_date, use_mock)
+        all_results[symbol] = results
+
+    print(f"\n{'='*70}")
+    print(f"  AGGREGATE COMPARISON")
+    print(f"{'='*70}")
+    print(f"\n  {'Strategy':<12} {'Trades':>6} {'Win%':>6} {'PnL':>12} {'PF':>5}")
+    print(f"  {'-'*12} {'-'*6} {'-'*6} {'-'*12} {'-'*5}")
+
+    for mode in ["smc", "ema", "mr", "all"]:
+        total_trades = sum(r[mode]["total_trades"] for s, r in all_results.items() if mode in r)
+        total_wins = sum(r[mode]["winning_trades"] for s, r in all_results.items() if mode in r)
+        total_pnl = sum(r[mode]["total_pnl"] for s, r in all_results.items() if mode in r)
+        wr = (total_wins / total_trades * 100) if total_trades > 0 else 0
+        avg_pf = sum(r[mode]["profit_factor"] for s, r in all_results.items() if mode in r)
+        avg_pf = avg_pf / len([s for s in all_results if mode in all_results[s]]) if all_results else 0
+
+        print(f"  {mode.upper():<12} {total_trades:>6} {wr:>5.1f}% ${total_pnl:>10,.2f} {avg_pf:>5.2f}")
+    print(f"{'='*70}\n")
 
     return all_results
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Pipst4eet Trading Bot")
-    parser.add_argument("--mode", choices=["backtest", "live", "walkforward"], default="backtest")
-    parser.add_argument("--symbol", default=None, help="Single pair to test (e.g. XAUUSD)")
+    parser.add_argument("--mode", choices=["backtest", "live", "walkforward", "compare"], default="backtest")
+    parser.add_argument("--strategy", choices=["smc", "ema", "mr", "all"], default=None, help="Strategy to test")
+    parser.add_argument("--symbol", default=None, help="Single pair to test")
     parser.add_argument("--start", default=None, help="Start date YYYY-MM-DD")
     parser.add_argument("--end", default=None, help="End date YYYY-MM-DD")
-    parser.add_argument("--mock", action="store_true", help="Use mock data instead of Twelve Data API")
+    parser.add_argument("--mock", action="store_true", help="Use mock data")
     args = parser.parse_args()
 
     config = load_config()
 
-    if args.mode == "backtest":
+    if args.mode == "compare":
         end_date = args.end or datetime.now().strftime("%Y-%m-%d")
         start_date = args.start or (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
-
         if args.symbol:
-            run_backtest(config, args.symbol, start_date, end_date, use_mock=args.mock)
+            run_comparison(config, args.symbol, start_date, end_date, use_mock=args.mock)
         else:
-            run_all_pairs(config, start_date, end_date, use_mock=args.mock)
+            run_all_pairs_comparison(config, start_date, end_date, use_mock=args.mock)
+    elif args.mode == "backtest":
+        end_date = args.end or datetime.now().strftime("%Y-%m-%d")
+        start_date = args.start or (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
+        strat = args.strategy or config["backtest"].get("mode", "all")
+
+        pairs = [args.symbol] if args.symbol else config["trading"]["pairs"]
+        for symbol in pairs:
+            r = run_backtest_single(config, symbol, start_date, end_date, use_mock=args.mock, strategy_mode=strat)
+            if r:
+                print(f"\n{symbol}: WR={r['win_rate']}%, PnL=${r['total_pnl']:.2f}, PF={r['profit_factor']}")
     elif args.mode == "live":
         bot = LiveBot(config)
         if bot.connect():
             bot.run()
-    elif args.mode == "walkforward":
-        end_date = args.end or datetime.now().strftime("%Y-%m-%d")
-        start_date = args.start or (datetime.now() - timedelta(days=730)).strftime("%Y-%m-%d")
-
-        if args.symbol:
-            run_walkforward(config, args.symbol, start_date, end_date, use_mock=args.mock)
-        else:
-            run_walkforward_all(config, start_date, end_date, use_mock=args.mock)
-    elif args.mode == "live":
-        logger.info("Live mode not yet implemented. Run backtest first.")

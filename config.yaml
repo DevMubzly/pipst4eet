@@ -39,9 +39,14 @@ strategy:
     bb_std: 2.0
     sl_pips: 20
     tp_pips: 30
+  smc:
+    swing_left: 5
+    swing_right: 5
+    fvg_max_age: 20
 
 backtest:
   initial_balance: 10
+  mode: "smc_only"
   walk_forward_train_months: 3
   walk_forward_test_months: 1
   monte_carlo_iterations: 1000
