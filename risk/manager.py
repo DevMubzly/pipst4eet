@@ -11,6 +11,8 @@ class RiskManager:
         self.open_positions = 0
         self.killed = False
         self.pair_config = config.get("pair_config", {})
+        self.enable_compounding = config["risk"].get("enable_compounding", False)
+        self.peak_balance = balance
 
     def calculate_position_size(self, symbol, entry_price, sl_price):
         risk_amount = self.balance * (self.risk_pct / 100)
@@ -64,6 +66,10 @@ class RiskManager:
         self.daily_pnl += pnl
         self.daily_trades += 1
         self.balance += pnl
+
+        # Update peak balance for compounding
+        if self.balance > self.peak_balance:
+            self.peak_balance = self.balance
 
         if self.daily_loss_pct and self.daily_pnl <= -(self.balance * self.daily_loss_pct / 100):
             self.killed = True

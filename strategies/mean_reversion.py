@@ -8,11 +8,18 @@ class MeanReversionStrategy:
         self.rsi_overbought = config["strategy"]["mean_reversion"]["rsi_overbought"]
         self.bb_period = config["strategy"]["mean_reversion"]["bb_period"]
         self.bb_std = config["strategy"]["mean_reversion"]["bb_std"]
+        self.bb_extreme_threshold = config["strategy"]["mean_reversion"].get("bb_extreme_threshold", 0.05)
         self.sl_pips = config["strategy"]["mean_reversion"]["sl_pips"]
         self.tp_pips = config["strategy"]["mean_reversion"]["tp_pips"]
         self.use_atr = config["strategy"]["mean_reversion"].get("use_atr_for_stops", False)
         self.atr_mult_sl = config["strategy"]["mean_reversion"].get("atr_multiplier_sl", 1.5)
         self.atr_mult_tp = config["strategy"]["mean_reversion"].get("atr_multiplier_tp", 2.5)
+        self.min_atr_mult = config["strategy"]["mean_reversion"].get("min_atr_multiplier", 0.8)
+        self.require_momentum = config["strategy"]["mean_reversion"].get("require_momentum_confirmation", False)
+        self.rsi_strength = config["strategy"]["mean_reversion"].get("rsi_strength_threshold", 5)
+        self.require_bullish_candle = config["strategy"]["mean_reversion"].get("require_bullish_candle_for_buy", False)
+        self.require_bearish_candle = config["strategy"]["mean_reversion"].get("require_bearish_candle_for_sell", False)
+        self.min_candle_body_ratio = config["strategy"]["mean_reversion"].get("min_candle_body_ratio", 0.3)
 
         self.pip_sizes = {
             "XAUUSD": 0.01,
@@ -63,13 +70,38 @@ class MeanReversionStrategy:
         if pd.isna(row.get("rsi")) or pd.isna(row.get("bb_pct")):
             return None
 
+        # Volatility filter - avoid low volatility periods
+        if self.use_atr and pd.notna(row.get("atr")) and pd.notna(row.get("atr_median")):
+            if row["atr"] < row["atr_median"] * self.min_atr_mult:
+                return None
+
         symbol = df["symbol"].iloc[0] if "symbol" in df.columns else "EURUSD"
         pip = self._pip_size(symbol)
 
-        rsi_cross_up = prev_row["rsi"] <= self.rsi_oversold and row["rsi"] > self.rsi_oversold
-        bb_low = row["bb_pct"] < 0.1
+        # Stricter conditions: require extreme BB position
+        bb_extreme_low = row["bb_pct"] < self.bb_extreme_threshold
+        bb_extreme_high = row["bb_pct"] > (1 - self.bb_extreme_threshold)
 
-        if rsi_cross_up and bb_low:
+        rsi_cross_up = prev_row["rsi"] <= self.rsi_oversold and row["rsi"] > self.rsi_oversold
+        rsi_cross_down = prev_row["rsi"] >= self.rsi_overbought and row["rsi"] < self.rsi_overbought
+
+        # RSI strength filter - require strong reversal
+        rsi_strength_up = row["rsi"] - prev_row["rsi"] > self.rsi_strength
+        rsi_strength_down = prev_row["rsi"] - row["rsi"] > self.rsi_strength
+
+        # Candle pattern confirmation
+        candle_body = row["close"] - row["open"]
+        candle_range = row["high"] - row["low"]
+        body_ratio = abs(candle_body) / candle_range if candle_range > 0 else 0
+        is_bullish_candle = candle_body > 0 and body_ratio >= self.min_candle_body_ratio
+        is_bearish_candle = candle_body < 0 and body_ratio >= self.min_candle_body_ratio
+
+        if rsi_cross_up and bb_extreme_low:
+            if self.require_momentum and not rsi_strength_up:
+                return None
+            if self.require_bullish_candle and not is_bullish_candle:
+                return None
+
             if self.use_atr and pd.notna(row.get("atr")):
                 atr = row["atr"]
                 sl = row["close"] - (atr * self.atr_mult_sl)
@@ -79,10 +111,12 @@ class MeanReversionStrategy:
                 tp = row["close"] + (self.tp_pips * pip)
             return {"direction": "buy", "sl": sl, "tp": tp, "reason": "mr_oversold"}
 
-        rsi_cross_down = prev_row["rsi"] >= self.rsi_overbought and row["rsi"] < self.rsi_overbought
-        bb_high = row["bb_pct"] > 0.9
+        if rsi_cross_down and bb_extreme_high:
+            if self.require_momentum and not rsi_strength_down:
+                return None
+            if self.require_bearish_candle and not is_bearish_candle:
+                return None
 
-        if rsi_cross_down and bb_high:
             if self.use_atr and pd.notna(row.get("atr")):
                 atr = row["atr"]
                 sl = row["close"] + (atr * self.atr_mult_sl)
