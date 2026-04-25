@@ -10,6 +10,7 @@ class RiskManager:
         self.daily_trades = 0
         self.open_positions = 0
         self.killed = False
+        self.pair_config = config.get("pair_config", {})
 
     def calculate_position_size(self, symbol, entry_price, sl_price):
         risk_amount = self.balance * (self.risk_pct / 100)
@@ -31,6 +32,9 @@ class RiskManager:
         return lot_size
 
     def _get_pair_config(self, symbol):
+        if symbol in self.pair_config:
+            return self.pair_config[symbol]
+        # Fallback defaults
         configs = {
             "XAUUSD": {"pip_value": 1.0, "pip_size": 0.01, "min_lot": 0.01, "max_lot": 5.0},
             "EURUSD": {"pip_value": 10.0, "pip_size": 0.0001, "min_lot": 0.01, "max_lot": 100.0},

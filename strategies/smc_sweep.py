@@ -6,6 +6,9 @@ class SMCSweepStrategy:
         self.swing_left = config["strategy"]["smc"]["swing_left"]
         self.swing_right = config["strategy"]["smc"]["swing_right"]
         self.fvg_max_age = config["strategy"]["smc"]["fvg_max_age"]
+        self.use_atr = config["strategy"]["smc"].get("use_atr_for_stops", False)
+        self.atr_mult_sl = config["strategy"]["smc"].get("atr_multiplier_sl", 1.5)
+        self.atr_mult_tp = config["strategy"]["smc"].get("atr_multiplier_tp", 2.5)
 
         self.pip_sizes = {
             "XAUUSD": 0.01,
@@ -20,6 +23,16 @@ class SMCSweepStrategy:
         df = df.copy()
         left = self.swing_left
         right = self.swing_right
+
+        # Add ATR calculation for adaptive stops
+        high = df["high"]
+        low = df["low"]
+        close = df["close"]
+        tr1 = high - low
+        tr2 = abs(high - close.shift(1))
+        tr3 = abs(low - close.shift(1))
+        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+        df["atr"] = tr.rolling(window=14).mean()
 
         df["swing_high"] = False
         df["swing_low"] = False
@@ -75,9 +88,16 @@ class SMCSweepStrategy:
                             confirm_idx = j + 1
                             if confirm_idx < len(df) and df["close"].iloc[confirm_idx] > df["open"].iloc[confirm_idx]:
                                 df.loc[df.index[confirm_idx], "smc_signal"] = "buy"
-                                df.loc[df.index[confirm_idx], "smc_sl"] = fvg_bottom - (3 * self._pip_size_from_df(df))
-                                tp = self._find_last_swing(df, sweep_idx, "high")
-                                df.loc[df.index[confirm_idx], "smc_tp"] = tp if tp else df["close"].iloc[confirm_idx] + (30 * self._pip_size_from_df(df))
+                                # Use ATR for adaptive stops if enabled
+                                if self.use_atr and pd.notna(df["atr"].iloc[confirm_idx]):
+                                    atr = df["atr"].iloc[confirm_idx]
+                                    df.loc[df.index[confirm_idx], "smc_sl"] = fvg_bottom - (atr * self.atr_mult_sl)
+                                    tp = self._find_last_swing(df, sweep_idx, "high")
+                                    df.loc[df.index[confirm_idx], "smc_tp"] = tp if tp else df["close"].iloc[confirm_idx] + (atr * self.atr_mult_tp)
+                                else:
+                                    df.loc[df.index[confirm_idx], "smc_sl"] = fvg_bottom - (3 * self._pip_size_from_df(df))
+                                    tp = self._find_last_swing(df, sweep_idx, "high")
+                                    df.loc[df.index[confirm_idx], "smc_tp"] = tp if tp else df["close"].iloc[confirm_idx] + (30 * self._pip_size_from_df(df))
                             break
 
             if df["sweep_high"].iloc[i]:
@@ -91,9 +111,16 @@ class SMCSweepStrategy:
                             confirm_idx = j + 1
                             if confirm_idx < len(df) and df["close"].iloc[confirm_idx] < df["open"].iloc[confirm_idx]:
                                 df.loc[df.index[confirm_idx], "smc_signal"] = "sell"
-                                df.loc[df.index[confirm_idx], "smc_sl"] = fvg_top + (3 * self._pip_size_from_df(df))
-                                tp = self._find_last_swing(df, sweep_idx, "low")
-                                df.loc[df.index[confirm_idx], "smc_tp"] = tp if tp else df["close"].iloc[confirm_idx] - (30 * self._pip_size_from_df(df))
+                                # Use ATR for adaptive stops if enabled
+                                if self.use_atr and pd.notna(df["atr"].iloc[confirm_idx]):
+                                    atr = df["atr"].iloc[confirm_idx]
+                                    df.loc[df.index[confirm_idx], "smc_sl"] = fvg_top + (atr * self.atr_mult_sl)
+                                    tp = self._find_last_swing(df, sweep_idx, "low")
+                                    df.loc[df.index[confirm_idx], "smc_tp"] = tp if tp else df["close"].iloc[confirm_idx] - (atr * self.atr_mult_tp)
+                                else:
+                                    df.loc[df.index[confirm_idx], "smc_sl"] = fvg_top + (3 * self._pip_size_from_df(df))
+                                    tp = self._find_last_swing(df, sweep_idx, "low")
+                                    df.loc[df.index[confirm_idx], "smc_tp"] = tp if tp else df["close"].iloc[confirm_idx] - (30 * self._pip_size_from_df(df))
                             break
 
         return df

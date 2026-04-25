@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 
 class Trade:
-    def __init__(self, symbol, direction, entry_price, entry_time, sl, tp, lot_size, reason):
+    def __init__(self, symbol, direction, entry_price, entry_time, sl, tp, lot_size, reason, spread_pips=0.5, slippage_pips=0.3, pair_config=None):
         self.symbol = symbol
         self.direction = direction
         self.entry_price = entry_price
@@ -17,21 +17,40 @@ class Trade:
         self.pnl = 0.0
         self.pips = 0.0
         self.is_open = True
+        self.spread_pips = spread_pips
+        self.slippage_pips = slippage_pips
+        self.pair_config = pair_config or {}
+
+        # Apply spread and slippage to entry price
+        pip_size = self._pip_size()
+        if direction == "buy":
+            self.entry_price += (spread_pips / 2 + slippage_pips) * pip_size
+        else:
+            self.entry_price -= (spread_pips / 2 + slippage_pips) * pip_size
 
     def check_exit(self, high, low, close, current_time):
         if not self.is_open:
             return None
 
+        pip_size = self._pip_size()
+        # Apply spread/slippage to exit prices
+        sl_adjusted = self.sl
+        tp_adjusted = self.tp
         if self.direction == "buy":
-            if low <= self.sl:
-                self._close(self.sl, current_time, "stop_loss")
-            elif high >= self.tp:
-                self._close(self.tp, current_time, "take_profit")
+            tp_adjusted -= (self.spread_pips / 2 + self.slippage_pips) * pip_size
+        else:
+            tp_adjusted += (self.spread_pips / 2 + self.slippage_pips) * pip_size
+
+        if self.direction == "buy":
+            if low <= sl_adjusted:
+                self._close(sl_adjusted, current_time, "stop_loss")
+            elif high >= tp_adjusted:
+                self._close(tp_adjusted, current_time, "take_profit")
         elif self.direction == "sell":
-            if high >= self.sl:
-                self._close(self.sl, current_time, "stop_loss")
-            elif low <= self.tp:
-                self._close(self.tp, current_time, "take_profit")
+            if high >= sl_adjusted:
+                self._close(sl_adjusted, current_time, "stop_loss")
+            elif low <= tp_adjusted:
+                self._close(tp_adjusted, current_time, "take_profit")
 
         return self
 
@@ -91,6 +110,9 @@ class BacktestEngine:
         self.trades = []
         self.open_trades = []
         self.equity_curve = []
+        self.spread_pips = config["backtest"].get("spread_pips", 0.5)
+        self.slippage_pips = config["backtest"].get("slippage_pips", 0.3)
+        self.pair_config = config.get("pair_config", {})
 
     def run(self, df, risk_manager, regime_detector, trend_strategy, mr_strategy, smc_strategy=None):
         session_start = self.config["trading"]["session_start"]
@@ -101,6 +123,11 @@ class BacktestEngine:
 
         if smc_strategy is not None:
             df = smc_strategy.compute_indicators(df)
+
+        # Run regime detection if enabled and detector provided
+        regime_config = self.config.get("regime", {})
+        if regime_detector and regime_config.get("enable_regime_filter", False):
+            df = regime_detector.detect_regime(df)
 
         symbol = df["symbol"].iloc[0] if "symbol" in df.columns else "EURUSD"
 
@@ -123,13 +150,45 @@ class BacktestEngine:
                 has_open = any(t.is_open for t in self.open_trades if t.symbol == symbol)
 
                 signal = None
-                if smc_strategy is not None:
-                    signal = smc_strategy.generate_signal(df, i, has_open)
+                regime = row.get("regime", "unknown") if "regime" in df.columns else "unknown"
 
-                if signal is None:
-                    signal = trend_strategy.generate_signal(df, i, has_open)
-                if signal is None:
-                    signal = mr_strategy.generate_signal(df, i, has_open)
+                # Use regime to prioritize strategies
+                if regime_config.get("enable_regime_filter", False):
+                    prefer_trend = regime_config.get("prefer_trend_in_trending", True)
+                    prefer_mr = regime_config.get("prefer_mr_in_ranging", True)
+
+                    if "trending" in regime and prefer_trend:
+                        # Prefer trend strategy in trending markets
+                        if smc_strategy is not None:
+                            signal = smc_strategy.generate_signal(df, i, has_open, regime)
+                        if signal is None:
+                            signal = trend_strategy.generate_signal(df, i, has_open, regime)
+                        if signal is None:
+                            signal = mr_strategy.generate_signal(df, i, has_open, regime)
+                    elif ("ranging" in regime or "weak_range" in regime) and prefer_mr:
+                        # Prefer mean reversion in ranging markets
+                        if smc_strategy is not None:
+                            signal = smc_strategy.generate_signal(df, i, has_open, regime)
+                        if signal is None:
+                            signal = mr_strategy.generate_signal(df, i, has_open, regime)
+                        if signal is None:
+                            signal = trend_strategy.generate_signal(df, i, has_open, regime)
+                    else:
+                        # Default order
+                        if smc_strategy is not None:
+                            signal = smc_strategy.generate_signal(df, i, has_open, regime)
+                        if signal is None:
+                            signal = trend_strategy.generate_signal(df, i, has_open, regime)
+                        if signal is None:
+                            signal = mr_strategy.generate_signal(df, i, has_open, regime)
+                else:
+                    # Default order without regime filter
+                    if smc_strategy is not None:
+                        signal = smc_strategy.generate_signal(df, i, has_open)
+                    if signal is None:
+                        signal = trend_strategy.generate_signal(df, i, has_open)
+                    if signal is None:
+                        signal = mr_strategy.generate_signal(df, i, has_open)
 
                 if signal:
                     lot_size = risk_manager.calculate_position_size(
@@ -139,6 +198,12 @@ class BacktestEngine:
                     )
 
                     if lot_size > 0:
+                        # Get pair-specific spread/slippage if available
+                        spread = self.spread_pips
+                        slippage = self.slippage_pips
+                        if symbol in self.pair_config:
+                            spread = self.pair_config[symbol].get("spread_pips", self.spread_pips)
+
                         trade = Trade(
                             symbol=symbol,
                             direction=signal["direction"],
@@ -147,7 +212,10 @@ class BacktestEngine:
                             sl=signal["sl"],
                             tp=signal["tp"],
                             lot_size=lot_size,
-                            reason=signal["reason"]
+                            reason=signal["reason"],
+                            spread_pips=spread,
+                            slippage_pips=slippage,
+                            pair_config=self.pair_config
                         )
                         self.open_trades.append(trade)
                         risk_manager.open_position()

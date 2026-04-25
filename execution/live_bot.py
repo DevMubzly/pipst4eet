@@ -4,6 +4,8 @@ from datetime import datetime, timedelta
 from data.fetcher import DataFetcher
 from strategies.trend_following import TrendFollowingStrategy
 from strategies.mean_reversion import MeanReversionStrategy
+from strategies.smc_sweep import SMCSweepStrategy
+from engine.regime import RegimeDetector
 from risk.manager import RiskManager
 from execution.mt5_executor import MT5Executor
 from utils.notifications import send_message, alert_error, alert_daily_summary
@@ -21,9 +23,10 @@ class LiveBot:
         self.close_before = config["trading"]["close_positions_before"]
 
         self.fetcher = DataFetcher()
-        self.regime_detector = None
+        self.regime_detector = RegimeDetector(config) if config.get("regime", {}).get("enable_regime_filter", False) else None
         self.trend_strategy = TrendFollowingStrategy(config)
         self.mr_strategy = MeanReversionStrategy(config)
+        self.smc_strategy = SMCSweepStrategy(config)
 
         initial_balance = config["backtest"]["initial_balance"]
         self.risk_manager = RiskManager(config, initial_balance)
@@ -83,6 +86,29 @@ class LiveBot:
             self.last_candle_time = now.replace(minute=(now.minute // 15) * 15, second=0, microsecond=0)
             self._scan_pairs()
 
+    def run(self):
+        logger.info("Live bot started")
+
+        while True:
+            try:
+                self._tick()
+                # Dynamic polling: check more frequently near candle close
+                now = datetime.now()
+                minute = now.minute
+                seconds_until_next_candle = ((15 - (minute % 15)) * 60) - now.second
+                if seconds_until_next_candle < 60:
+                    time.sleep(5)  # Check every 5s near candle close
+                else:
+                    time.sleep(30)  # Check every 30s otherwise
+            except KeyboardInterrupt:
+                logger.info("Bot stopped by user")
+                self.executor.disconnect()
+                break
+            except Exception as e:
+                logger.error(f"Error in live loop: {e}")
+                alert_error(str(e))
+                time.sleep(60)
+
     def _is_session_active(self, time_str):
         return self.session_start <= time_str <= self.session_end
 
@@ -98,49 +124,90 @@ class LiveBot:
                 self._scan_pair(symbol)
             except Exception as e:
                 logger.error(f"Error scanning {symbol}: {e}")
+                alert_error(f"Error scanning {symbol}: {str(e)}")
 
     def _scan_pair(self, symbol):
-        end = datetime.now()
-        start = end - timedelta(days=90)
+        try:
+            end = datetime.now()
+            start = end - timedelta(days=90)
 
-        df = self.fetcher.fetch_and_cache(symbol, self.timeframe, start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))
+            df = self.fetcher.fetch_and_cache(symbol, self.timeframe, start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))
 
-        if df is None or df.empty or len(df) < 50:
-            return
+            if df is None or df.empty or len(df) < 50:
+                return
 
-        df = self.trend_strategy.compute_indicators(df)
-        df = self.mr_strategy.compute_indicators(df)
+            df = self.trend_strategy.compute_indicators(df)
+            df = self.mr_strategy.compute_indicators(df)
+            df = self.smc_strategy.compute_indicators(df)
 
-        open_positions = self.executor.get_open_positions(symbol)
-        has_open = len(open_positions) > 0
+            # Run regime detection if enabled
+            regime = "unknown"
+            if self.regime_detector:
+                df = self.regime_detector.detect_regime(df)
+                regime = df.iloc[-1].get("regime", "unknown")
 
-        if has_open:
-            return
+            open_positions = self.executor.get_open_positions(symbol)
+            has_open = len(open_positions) > 0
 
-        if not self.risk_manager.can_open_trade():
-            return
+            if has_open:
+                return
 
-        idx = len(df) - 1
-        row = df.iloc[idx]
+            if not self.risk_manager.can_open_trade():
+                return
 
-        signal = self.trend_strategy.generate_signal(df, idx, has_open)
-        if signal is None:
-            signal = self.mr_strategy.generate_signal(df, idx, has_open)
+            idx = len(df) - 1
+            row = df.iloc[idx]
 
-        if signal:
-            lot_size = self.risk_manager.calculate_position_size(symbol, row["close"], signal["sl"])
+            # Use regime to prioritize strategies
+            regime_config = self.config.get("regime", {})
+            signal = None
 
-            if lot_size > 0:
-                trade = self.executor.open_trade(
-                    symbol=symbol,
-                    direction=signal["direction"],
-                    entry_price=row["close"],
-                    sl=signal["sl"],
-                    tp=signal["tp"],
-                    lot_size=lot_size,
-                    reason=signal["reason"],
-                )
+            if regime_config.get("enable_regime_filter", False):
+                prefer_trend = regime_config.get("prefer_trend_in_trending", True)
+                prefer_mr = regime_config.get("prefer_mr_in_ranging", True)
 
-                if trade:
-                    self.risk_manager.open_position()
-                    self.daily_trades_count += 1
+                if "trending" in regime and prefer_trend:
+                    signal = self.smc_strategy.generate_signal(df, idx, has_open, regime)
+                    if signal is None:
+                        signal = self.trend_strategy.generate_signal(df, idx, has_open, regime)
+                    if signal is None:
+                        signal = self.mr_strategy.generate_signal(df, idx, has_open, regime)
+                elif ("ranging" in regime or "weak_range" in regime) and prefer_mr:
+                    signal = self.smc_strategy.generate_signal(df, idx, has_open, regime)
+                    if signal is None:
+                        signal = self.mr_strategy.generate_signal(df, idx, has_open, regime)
+                    if signal is None:
+                        signal = self.trend_strategy.generate_signal(df, idx, has_open, regime)
+                else:
+                    signal = self.smc_strategy.generate_signal(df, idx, has_open, regime)
+                    if signal is None:
+                        signal = self.trend_strategy.generate_signal(df, idx, has_open, regime)
+                    if signal is None:
+                        signal = self.mr_strategy.generate_signal(df, idx, has_open, regime)
+            else:
+                signal = self.smc_strategy.generate_signal(df, idx, has_open)
+                if signal is None:
+                    signal = self.trend_strategy.generate_signal(df, idx, has_open)
+                if signal is None:
+                    signal = self.mr_strategy.generate_signal(df, idx, has_open)
+
+            if signal:
+                lot_size = self.risk_manager.calculate_position_size(symbol, row["close"], signal["sl"])
+
+                if lot_size > 0:
+                    trade = self.executor.open_trade(
+                        symbol=symbol,
+                        direction=signal["direction"],
+                        entry_price=row["close"],
+                        sl=signal["sl"],
+                        tp=signal["tp"],
+                        lot_size=lot_size,
+                        reason=signal["reason"],
+                    )
+
+                    if trade:
+                        self.risk_manager.open_position()
+                        self.daily_trades_count += 1
+        except Exception as e:
+            logger.error(f"Error scanning {symbol}: {e}")
+            alert_error(f"Error scanning {symbol}: {str(e)}")

@@ -24,6 +24,59 @@ lots:
   GBPJPY: 0.01
   AUDUSD: 0.01
 
+pair_config:
+  EURUSD:
+    pip_value: 10.0
+    pip_size: 0.0001
+    min_lot: 0.01
+    max_lot: 100.0
+    spread_pips: 0.5
+  GBPUSD:
+    pip_value: 10.0
+    pip_size: 0.0001
+    min_lot: 0.01
+    max_lot: 100.0
+    spread_pips: 0.5
+  USDJPY:
+    pip_value: 10.0
+    pip_size: 0.01
+    min_lot: 0.01
+    max_lot: 100.0
+    spread_pips: 0.05
+  GBPJPY:
+    pip_value: 10.0
+    pip_size: 0.01
+    min_lot: 0.01
+    max_lot: 100.0
+    spread_pips: 0.05
+  AUDUSD:
+    pip_value: 10.0
+    pip_size: 0.0001
+    min_lot: 0.01
+    max_lot: 100.0
+    spread_pips: 0.5
+  XAUUSD:
+    pip_value: 1.0
+    pip_size: 0.01
+    min_lot: 0.01
+    max_lot: 5.0
+    spread_pips: 0.3
+
+regime:
+  adx_period: 14
+  adx_trend_threshold: 25
+  adx_range_threshold: 20
+  choppiness_period: 14
+  chop_range_threshold: 61.8
+  chop_trend_threshold: 38.2
+  bb_period: 20
+  bb_std: 2.0
+  confirmation_candles: 3
+  atr_lookback: 14
+  enable_regime_filter: true
+  prefer_trend_in_trending: true
+  prefer_mr_in_ranging: true
+
 strategy:
   trend:
     ema_fast: 9
@@ -31,6 +84,9 @@ strategy:
     sl_pips: 20
     tp_pips: 30
     min_ema_separation_pct: 0.02
+    use_atr_for_stops: true
+    atr_multiplier_sl: 1.5
+    atr_multiplier_tp: 2.5
   mean_reversion:
     rsi_period: 14
     rsi_oversold: 30
@@ -39,10 +95,16 @@ strategy:
     bb_std: 2.0
     sl_pips: 20
     tp_pips: 30
+    use_atr_for_stops: true
+    atr_multiplier_sl: 1.5
+    atr_multiplier_tp: 2.5
   smc:
     swing_left: 5
     swing_right: 5
     fvg_max_age: 20
+    use_atr_for_stops: true
+    atr_multiplier_sl: 1.5
+    atr_multiplier_tp: 2.5
 
 backtest:
   initial_balance: 10
@@ -50,6 +112,8 @@ backtest:
   walk_forward_train_months: 3
   walk_forward_test_months: 1
   monte_carlo_iterations: 1000
+  spread_pips: 0.5
+  slippage_pips: 0.3
 
 execution:
   mode: "demo"

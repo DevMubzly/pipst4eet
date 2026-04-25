@@ -8,6 +8,9 @@ class TrendFollowingStrategy:
         self.sl_pips = config["strategy"]["trend"]["sl_pips"]
         self.tp_pips = config["strategy"]["trend"]["tp_pips"]
         self.min_ema_sep_pct = config["strategy"]["trend"].get("min_ema_separation_pct", 0.02)
+        self.use_atr = config["strategy"]["trend"].get("use_atr_for_stops", False)
+        self.atr_mult_sl = config["strategy"]["trend"].get("atr_multiplier_sl", 1.5)
+        self.atr_mult_tp = config["strategy"]["trend"].get("atr_multiplier_tp", 2.5)
 
         self.pip_sizes = {
             "XAUUSD": 0.01,
@@ -46,6 +49,12 @@ class TrendFollowingStrategy:
         if idx < self.ema_slow + 100:
             return None
 
+        # Filter based on regime if provided
+        if htf_bias and isinstance(htf_bias, str):
+            # Trend strategy works best in trending markets
+            if "ranging" in htf_bias or "weak_range" in htf_bias:
+                return None
+
         row = df.iloc[idx]
         prev_row = df.iloc[idx - 1]
 
@@ -65,14 +74,24 @@ class TrendFollowingStrategy:
         cross_up = prev_row["ema_fast"] <= prev_row["ema_slow"] and row["ema_fast"] > row["ema_slow"]
         cross_down = prev_row["ema_fast"] >= prev_row["ema_slow"] and row["ema_fast"] < row["ema_slow"]
 
-        if cross_up:
-            sl = row["close"] - (self.sl_pips * pip)
-            tp = row["close"] + (self.tp_pips * pip)
-            return {"direction": "buy", "sl": sl, "tp": tp, "reason": "trend_cross_up"}
-
-        if cross_down:
-            sl = row["close"] + (self.sl_pips * pip)
-            tp = row["close"] - (self.tp_pips * pip)
-            return {"direction": "sell", "sl": sl, "tp": tp, "reason": "trend_cross_down"}
+        if self.use_atr and pd.notna(row.get("atr")):
+            atr = row["atr"]
+            if cross_up:
+                sl = row["close"] - (atr * self.atr_mult_sl)
+                tp = row["close"] + (atr * self.atr_mult_tp)
+                return {"direction": "buy", "sl": sl, "tp": tp, "reason": "trend_cross_up"}
+            if cross_down:
+                sl = row["close"] + (atr * self.atr_mult_sl)
+                tp = row["close"] - (atr * self.atr_mult_tp)
+                return {"direction": "sell", "sl": sl, "tp": tp, "reason": "trend_cross_down"}
+        else:
+            if cross_up:
+                sl = row["close"] - (self.sl_pips * pip)
+                tp = row["close"] + (self.tp_pips * pip)
+                return {"direction": "buy", "sl": sl, "tp": tp, "reason": "trend_cross_up"}
+            if cross_down:
+                sl = row["close"] + (self.sl_pips * pip)
+                tp = row["close"] - (self.tp_pips * pip)
+                return {"direction": "sell", "sl": sl, "tp": tp, "reason": "trend_cross_down"}
 
         return None

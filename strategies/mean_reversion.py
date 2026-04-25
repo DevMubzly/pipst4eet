@@ -10,6 +10,9 @@ class MeanReversionStrategy:
         self.bb_std = config["strategy"]["mean_reversion"]["bb_std"]
         self.sl_pips = config["strategy"]["mean_reversion"]["sl_pips"]
         self.tp_pips = config["strategy"]["mean_reversion"]["tp_pips"]
+        self.use_atr = config["strategy"]["mean_reversion"].get("use_atr_for_stops", False)
+        self.atr_mult_sl = config["strategy"]["mean_reversion"].get("atr_multiplier_sl", 1.5)
+        self.atr_mult_tp = config["strategy"]["mean_reversion"].get("atr_multiplier_tp", 2.5)
 
         self.pip_sizes = {
             "XAUUSD": 0.01,
@@ -48,6 +51,12 @@ class MeanReversionStrategy:
         if idx < max(self.rsi_period, self.bb_period) + 1:
             return None
 
+        # Filter based on regime if provided
+        if htf_bias and isinstance(htf_bias, str):
+            # Mean reversion works best in ranging markets
+            if "trending" in htf_bias:
+                return None
+
         row = df.iloc[idx]
         prev_row = df.iloc[idx - 1]
 
@@ -61,16 +70,26 @@ class MeanReversionStrategy:
         bb_low = row["bb_pct"] < 0.1
 
         if rsi_cross_up and bb_low:
-            sl = row["close"] - (self.sl_pips * pip)
-            tp = row["close"] + (self.tp_pips * pip)
+            if self.use_atr and pd.notna(row.get("atr")):
+                atr = row["atr"]
+                sl = row["close"] - (atr * self.atr_mult_sl)
+                tp = row["close"] + (atr * self.atr_mult_tp)
+            else:
+                sl = row["close"] - (self.sl_pips * pip)
+                tp = row["close"] + (self.tp_pips * pip)
             return {"direction": "buy", "sl": sl, "tp": tp, "reason": "mr_oversold"}
 
         rsi_cross_down = prev_row["rsi"] >= self.rsi_overbought and row["rsi"] < self.rsi_overbought
         bb_high = row["bb_pct"] > 0.9
 
         if rsi_cross_down and bb_high:
-            sl = row["close"] + (self.sl_pips * pip)
-            tp = row["close"] - (self.tp_pips * pip)
+            if self.use_atr and pd.notna(row.get("atr")):
+                atr = row["atr"]
+                sl = row["close"] + (atr * self.atr_mult_sl)
+                tp = row["close"] - (atr * self.atr_mult_tp)
+            else:
+                sl = row["close"] + (self.sl_pips * pip)
+                tp = row["close"] - (self.tp_pips * pip)
             return {"direction": "sell", "sl": sl, "tp": tp, "reason": "mr_overbought"}
 
         return None
