@@ -1,57 +1,46 @@
+from typing import Dict, Any, Optional
 import pandas as pd
-import numpy as np
+from strategies.base_strategy import BaseStrategy
 
-class TrendFollowingStrategy:
-    def __init__(self, config):
-        self.ema_fast = config["strategy"]["trend"]["ema_fast"]
-        self.ema_slow = config["strategy"]["trend"]["ema_slow"]
-        self.sl_pips = config["strategy"]["trend"]["sl_pips"]
-        self.tp_pips = config["strategy"]["trend"]["tp_pips"]
-        self.min_ema_sep_pct = config["strategy"]["trend"].get("min_ema_separation_pct", 0.02)
-        self.use_atr = config["strategy"]["trend"].get("use_atr_for_stops", False)
-        self.atr_mult_sl = config["strategy"]["trend"].get("atr_multiplier_sl", 1.5)
-        self.atr_mult_tp = config["strategy"]["trend"].get("atr_multiplier_tp", 2.5)
 
-        self.pip_sizes = {
-            "XAUUSD": 0.01,
-            "EURUSD": 0.0001,
-            "GBPUSD": 0.0001,
-            "USDJPY": 0.01,
-            "GBPJPY": 0.01,
-            "AUDUSD": 0.0001,
-        }
+class TrendFollowingStrategy(BaseStrategy):
+    def __init__(self, config: Dict[str, Any]):
+        super().__init__(config)
+        strategy_config = config["strategy"]["trend"]
+        self.ema_fast = strategy_config["ema_fast"]
+        self.ema_slow = strategy_config["ema_slow"]
+        self.sl_pips = strategy_config["sl_pips"]
+        self.tp_pips = strategy_config["tp_pips"]
+        self.min_ema_sep_pct = strategy_config.get("min_ema_separation_pct", 0.02)
+        self.use_atr = strategy_config.get("use_atr_for_stops", False)
+        self.atr_mult_sl = strategy_config.get("atr_multiplier_sl", 1.5)
+        self.atr_mult_tp = strategy_config.get("atr_multiplier_tp", 2.5)
 
-    def compute_indicators(self, df):
+    def compute_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
         df["ema_fast"] = df["close"].ewm(span=self.ema_fast, adjust=False).mean()
         df["ema_slow"] = df["close"].ewm(span=self.ema_slow, adjust=False).mean()
         df["ema_separation_pct"] = abs(df["ema_fast"] - df["ema_slow"]) / df["close"] * 100
 
-        high = df["high"]
-        low = df["low"]
-        close = df["close"]
-        tr1 = high - low
-        tr2 = abs(high - close.shift(1))
-        tr3 = abs(low - close.shift(1))
-        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-        df["atr"] = tr.rolling(window=14).mean()
+        df["atr"] = self.compute_atr(df, 14)
         df["atr_median"] = df["atr"].rolling(window=100).median()
 
         return df
 
-    def _pip_size(self, symbol):
-        return self.pip_sizes.get(symbol, 0.0001)
-
-    def generate_signal(self, df, idx, open_positions_for_symbol, htf_bias=None):
+    def generate_signal(
+        self,
+        df: pd.DataFrame,
+        idx: int,
+        open_positions_for_symbol: bool,
+        htf_bias: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
         if open_positions_for_symbol:
             return None
 
         if idx < self.ema_slow + 100:
             return None
 
-        # Filter based on regime if provided
         if htf_bias and isinstance(htf_bias, str):
-            # Trend strategy works best in trending markets
             if "ranging" in htf_bias or "weak_range" in htf_bias:
                 return None
 
@@ -68,7 +57,7 @@ class TrendFollowingStrategy:
             if row["atr"] < row["atr_median"] * 0.8:
                 return None
 
-        symbol = df["symbol"].iloc[0] if "symbol" in df.columns else "EURUSD"
+        symbol = self._get_symbol(df)
         pip = self._pip_size(symbol)
 
         cross_up = prev_row["ema_fast"] <= prev_row["ema_slow"] and row["ema_fast"] > row["ema_slow"]

@@ -1,20 +1,22 @@
 trading:
   pairs:
     - EURUSD
+    - GBPUSD
+    - AUDUSD
   timeframe: "15m"
-  session_start: "00:00"
-  session_end: "23:59"
+  session_start: "09:00"
+  session_end: "19:00"
   timezone: "UTC+3"
-  close_positions_before: "23:55"
+  close_positions_before: "18:55"
 
 risk:
-  risk_per_trade_pct: 30.0
+  risk_per_trade_pct: 15.0
   daily_loss_limit_pct: null
   daily_loss_limit_usd: null
-  max_open_positions: 3
-  max_daily_trades: 999
+  max_open_positions: 2
+  max_daily_trades: 50
   trailing_drawdown_pct: null
-  enable_compounding: true
+  enable_compounding: false
 
 lots:
   EURUSD: 0.01
@@ -88,22 +90,22 @@ strategy:
     atr_multiplier_tp: 2.5
   mean_reversion:
     rsi_period: 14
-    rsi_oversold: 30
-    rsi_overbought: 70
+    rsi_oversold: 25
+    rsi_overbought: 75
     bb_period: 20
     bb_std: 2.0
-    bb_extreme_threshold: 0.1
+    bb_extreme_threshold: 0.05
     sl_pips: 20
     tp_pips: 30
     use_atr_for_stops: true
     atr_multiplier_sl: 1.5
-    atr_multiplier_tp: 5.0
-    min_atr_multiplier: 0.5
-    require_momentum_confirmation: false
-    rsi_strength_threshold: 3
-    require_bullish_candle_for_buy: false
-    require_bearish_candle_for_sell: false
-    min_candle_body_ratio: 0.2
+    atr_multiplier_tp: 6.0
+    min_atr_multiplier: 0.8
+    require_momentum_confirmation: true
+    rsi_strength_threshold: 5
+    require_bullish_candle_for_buy: true
+    require_bearish_candle_for_sell: true
+    min_candle_body_ratio: 0.35
   smc:
     swing_left: 5
     swing_right: 5

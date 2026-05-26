@@ -1,36 +1,31 @@
+from typing import Dict, Any, Optional
 import pandas as pd
-import numpy as np
+from strategies.base_strategy import BaseStrategy
 
-class MeanReversionStrategy:
-    def __init__(self, config):
-        self.rsi_period = config["strategy"]["mean_reversion"]["rsi_period"]
-        self.rsi_oversold = config["strategy"]["mean_reversion"]["rsi_oversold"]
-        self.rsi_overbought = config["strategy"]["mean_reversion"]["rsi_overbought"]
-        self.bb_period = config["strategy"]["mean_reversion"]["bb_period"]
-        self.bb_std = config["strategy"]["mean_reversion"]["bb_std"]
-        self.bb_extreme_threshold = config["strategy"]["mean_reversion"].get("bb_extreme_threshold", 0.05)
-        self.sl_pips = config["strategy"]["mean_reversion"]["sl_pips"]
-        self.tp_pips = config["strategy"]["mean_reversion"]["tp_pips"]
-        self.use_atr = config["strategy"]["mean_reversion"].get("use_atr_for_stops", False)
-        self.atr_mult_sl = config["strategy"]["mean_reversion"].get("atr_multiplier_sl", 1.5)
-        self.atr_mult_tp = config["strategy"]["mean_reversion"].get("atr_multiplier_tp", 2.5)
-        self.min_atr_mult = config["strategy"]["mean_reversion"].get("min_atr_multiplier", 0.8)
-        self.require_momentum = config["strategy"]["mean_reversion"].get("require_momentum_confirmation", False)
-        self.rsi_strength = config["strategy"]["mean_reversion"].get("rsi_strength_threshold", 5)
-        self.require_bullish_candle = config["strategy"]["mean_reversion"].get("require_bullish_candle_for_buy", False)
-        self.require_bearish_candle = config["strategy"]["mean_reversion"].get("require_bearish_candle_for_sell", False)
-        self.min_candle_body_ratio = config["strategy"]["mean_reversion"].get("min_candle_body_ratio", 0.3)
 
-        self.pip_sizes = {
-            "XAUUSD": 0.01,
-            "EURUSD": 0.0001,
-            "GBPUSD": 0.0001,
-            "USDJPY": 0.01,
-            "GBPJPY": 0.01,
-            "AUDUSD": 0.0001,
-        }
+class MeanReversionStrategy(BaseStrategy):
+    def __init__(self, config: Dict[str, Any]):
+        super().__init__(config)
+        strategy_config = config["strategy"]["mean_reversion"]
+        self.rsi_period = strategy_config["rsi_period"]
+        self.rsi_oversold = strategy_config["rsi_oversold"]
+        self.rsi_overbought = strategy_config["rsi_overbought"]
+        self.bb_period = strategy_config["bb_period"]
+        self.bb_std = strategy_config["bb_std"]
+        self.bb_extreme_threshold = strategy_config.get("bb_extreme_threshold", 0.05)
+        self.sl_pips = strategy_config["sl_pips"]
+        self.tp_pips = strategy_config["tp_pips"]
+        self.use_atr = strategy_config.get("use_atr_for_stops", False)
+        self.atr_mult_sl = strategy_config.get("atr_multiplier_sl", 1.5)
+        self.atr_mult_tp = strategy_config.get("atr_multiplier_tp", 2.5)
+        self.min_atr_mult = strategy_config.get("min_atr_multiplier", 0.8)
+        self.require_momentum = strategy_config.get("require_momentum_confirmation", False)
+        self.rsi_strength = strategy_config.get("rsi_strength_threshold", 5)
+        self.require_bullish_candle = strategy_config.get("require_bullish_candle_for_buy", False)
+        self.require_bearish_candle = strategy_config.get("require_bearish_candle_for_sell", False)
+        self.min_candle_body_ratio = strategy_config.get("min_candle_body_ratio", 0.3)
 
-    def compute_indicators(self, df):
+    def compute_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
         delta = df["close"].diff()
         gain = delta.where(delta > 0, 0)
@@ -48,19 +43,20 @@ class MeanReversionStrategy:
 
         return df
 
-    def _pip_size(self, symbol):
-        return self.pip_sizes.get(symbol, 0.0001)
-
-    def generate_signal(self, df, idx, open_positions_for_symbol, htf_bias=None):
+    def generate_signal(
+        self,
+        df: pd.DataFrame,
+        idx: int,
+        open_positions_for_symbol: bool,
+        htf_bias: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
         if open_positions_for_symbol:
             return None
 
         if idx < max(self.rsi_period, self.bb_period) + 1:
             return None
 
-        # Filter based on regime if provided
         if htf_bias and isinstance(htf_bias, str):
-            # Mean reversion works best in ranging markets
             if "trending" in htf_bias:
                 return None
 
@@ -70,26 +66,22 @@ class MeanReversionStrategy:
         if pd.isna(row.get("rsi")) or pd.isna(row.get("bb_pct")):
             return None
 
-        # Volatility filter - avoid low volatility periods
         if self.use_atr and pd.notna(row.get("atr")) and pd.notna(row.get("atr_median")):
             if row["atr"] < row["atr_median"] * self.min_atr_mult:
                 return None
 
-        symbol = df["symbol"].iloc[0] if "symbol" in df.columns else "EURUSD"
+        symbol = self._get_symbol(df)
         pip = self._pip_size(symbol)
 
-        # Stricter conditions: require extreme BB position
         bb_extreme_low = row["bb_pct"] < self.bb_extreme_threshold
         bb_extreme_high = row["bb_pct"] > (1 - self.bb_extreme_threshold)
 
         rsi_cross_up = prev_row["rsi"] <= self.rsi_oversold and row["rsi"] > self.rsi_oversold
         rsi_cross_down = prev_row["rsi"] >= self.rsi_overbought and row["rsi"] < self.rsi_overbought
 
-        # RSI strength filter - require strong reversal
         rsi_strength_up = row["rsi"] - prev_row["rsi"] > self.rsi_strength
         rsi_strength_down = prev_row["rsi"] - row["rsi"] > self.rsi_strength
 
-        # Candle pattern confirmation
         candle_body = row["close"] - row["open"]
         candle_range = row["high"] - row["low"]
         body_ratio = abs(candle_body) / candle_range if candle_range > 0 else 0

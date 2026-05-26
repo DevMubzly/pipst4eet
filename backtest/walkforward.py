@@ -1,19 +1,21 @@
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta
+from typing import Dict, Any, List, Optional
 from backtest.engine import BacktestEngine
 from engine.regime import RegimeDetector
 from strategies.trend_following import TrendFollowingStrategy
 from strategies.mean_reversion import MeanReversionStrategy
+from strategies.smc_sweep import SMCSweepStrategy
 from risk.manager import RiskManager
 
+
 class WalkForwardAnalyzer:
-    def __init__(self, config):
+    def __init__(self, config: Dict[str, Any]):
         self.config = config
         self.train_months = config["backtest"]["walk_forward_train_months"]
         self.test_months = config["backtest"]["walk_forward_test_months"]
 
-    def generate_windows(self, df):
+    def generate_windows(self, df: pd.DataFrame) -> List[Dict[str, Any]]:
         windows = []
         start = df.index.min()
         end = df.index.max()
@@ -56,7 +58,7 @@ class WalkForwardAnalyzer:
 
         return windows
 
-    def run(self, df):
+    def run(self, df: pd.DataFrame) -> Optional[List[Dict[str, Any]]]:
         windows = self.generate_windows(df)
 
         if not windows:
@@ -81,12 +83,20 @@ class WalkForwardAnalyzer:
             regime_detector = RegimeDetector(self.config)
             trend_strategy = TrendFollowingStrategy(self.config)
             mr_strategy = MeanReversionStrategy(self.config)
+            smc_strategy = SMCSweepStrategy(self.config)
 
             initial_balance = self.config["backtest"]["initial_balance"]
             risk_manager = RiskManager(self.config, initial_balance)
 
             engine = BacktestEngine(self.config)
-            report = engine.run(test_df, risk_manager, regime_detector, trend_strategy, mr_strategy)
+            report = engine.run(
+                test_df,
+                risk_manager,
+                regime_detector,
+                trend_strategy,
+                mr_strategy,
+                smc_strategy
+            )
 
             report["window"] = w["num"]
             report["train_start"] = w["train_start"].strftime("%Y-%m-%d")
@@ -111,7 +121,7 @@ class WalkForwardAnalyzer:
 
         return all_results
 
-    def _print_summary(self, results):
+    def _print_summary(self, results: List[Dict[str, Any]]) -> None:
         print(f"\n{'='*70}")
         print(f"  WALK-FORWARD SUMMARY")
         print(f"{'='*70}")

@@ -1,5 +1,6 @@
 import os
 import time
+from typing import Dict, Any, Optional, Tuple, List
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -10,7 +11,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-def get_api_key():
+
+def get_api_key() -> Optional[str]:
     key = os.getenv("TWELVEDATA_API_KEY")
     if key:
         return key
@@ -20,10 +22,11 @@ def get_api_key():
     key = os.getenv("TWELVEDATA-API-KEY")
     return key
 
+
 DATA_DIR = Path(__file__).parent.parent / "data"
 DATA_DIR.mkdir(exist_ok=True)
 
-TIMEFRAME_MAP = {
+TIMEFRAME_MAP: Dict[str, str] = {
     "1m": "1min",
     "5m": "5min",
     "15m": "15min",
@@ -33,7 +36,7 @@ TIMEFRAME_MAP = {
     "1d": "1day",
 }
 
-SYMBOL_MAP = {
+SYMBOL_MAP: Dict[str, str] = {
     "XAUUSD": "XAU/USD",
     "EURUSD": "EUR/USD",
     "GBPUSD": "GBP/USD",
@@ -42,31 +45,33 @@ SYMBOL_MAP = {
     "AUDUSD": "AUD/USD",
 }
 
+
 class DataFetcher:
-    def __init__(self, api_key=None):
+    def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or get_api_key()
         self.client = TDClient(apikey=self.api_key)
 
-    def _get_td_symbol(self, symbol):
+    def _get_td_symbol(self, symbol: str) -> str:
         return SYMBOL_MAP.get(symbol, symbol)
 
-    def _get_td_interval(self, timeframe):
+    def _get_td_interval(self, timeframe: str) -> str:
         return TIMEFRAME_MAP.get(timeframe, timeframe)
 
-    def fetch_ohlcv(self, symbol, timeframe, start_date, end_date):
+    def fetch_ohlcv(
+        self, symbol: str, timeframe: str, start_date: str, end_date: str
+    ) -> pd.DataFrame:
         td_symbol = self._get_td_symbol(symbol)
         interval = self._get_td_interval(timeframe)
 
         start = pd.Timestamp(start_date)
         end = pd.Timestamp(end_date)
 
-        all_frames = []
+        all_frames: List[pd.DataFrame] = []
         chunk_end = end
 
         while chunk_end > start:
             chunk_start = max(start, chunk_end - pd.Timedelta(days=180))
 
-            ts = TDClient(apikey=self.api_key)
             params = {
                 "symbol": td_symbol,
                 "interval": interval,
@@ -76,7 +81,7 @@ class DataFetcher:
             }
 
             try:
-                series = ts.time_series(**params).as_pandas()
+                series = self.client.time_series(**params).as_pandas()
             except Exception as e:
                 raise Exception(f"Failed to fetch {symbol} ({chunk_start} to {chunk_end}): {e}")
 
@@ -114,20 +119,22 @@ class DataFetcher:
 
         return series
 
-    def save_to_parquet(self, df, symbol, timeframe):
+    def save_to_parquet(self, df: pd.DataFrame, symbol: str, timeframe: str) -> Path:
         path = DATA_DIR / f"{symbol}_{timeframe}.parquet"
         table = pa.Table.from_pandas(df)
         pq.write_table(table, path)
         return path
 
-    def load_from_parquet(self, symbol, timeframe):
+    def load_from_parquet(self, symbol: str, timeframe: str) -> Optional[pd.DataFrame]:
         path = DATA_DIR / f"{symbol}_{timeframe}.parquet"
         if not path.exists():
             return None
         table = pq.read_table(path)
         return table.to_pandas()
 
-    def fetch_and_cache(self, symbol, timeframe, start_date, end_date):
+    def fetch_and_cache(
+        self, symbol: str, timeframe: str, start_date: str, end_date: str
+    ) -> Optional[pd.DataFrame]:
         cached = self.load_from_parquet(symbol, timeframe)
 
         if cached is not None and not cached.empty:
@@ -148,7 +155,9 @@ class DataFetcher:
         self.save_to_parquet(df, symbol, timeframe)
         return df
 
-    def fetch_multi_timeframe(self, symbol, low_tf, high_tf, start_date, end_date):
+    def fetch_multi_timeframe(
+        self, symbol: str, low_tf: str, high_tf: str, start_date: str, end_date: str
+    ) -> Tuple[Optional[pd.DataFrame], Optional[pd.DataFrame]]:
         low_df = self.fetch_and_cache(symbol, low_tf, start_date, end_date)
         high_df = self.fetch_and_cache(symbol, high_tf, start_date, end_date)
         return low_df, high_df

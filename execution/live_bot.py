@@ -1,10 +1,12 @@
 import time
 import pandas as pd
 from datetime import datetime, timedelta
+from typing import Dict, Any, Optional
 from data.fetcher import DataFetcher
 from strategies.trend_following import TrendFollowingStrategy
 from strategies.mean_reversion import MeanReversionStrategy
 from strategies.smc_sweep import SMCSweepStrategy
+from strategies.strategy_orchestrator import StrategyOrchestrator
 from engine.regime import RegimeDetector
 from risk.manager import RiskManager
 from execution.mt5_executor import MT5Executor
@@ -13,8 +15,9 @@ from utils.logger import setup_logger
 
 logger = setup_logger("live")
 
+
 class LiveBot:
-    def __init__(self, config):
+    def __init__(self, config: Dict[str, Any]):
         self.config = config
         self.pairs = config["trading"]["pairs"]
         self.timeframe = config["trading"]["timeframe"]
@@ -28,15 +31,22 @@ class LiveBot:
         self.mr_strategy = MeanReversionStrategy(config)
         self.smc_strategy = SMCSweepStrategy(config)
 
+        self.orchestrator = StrategyOrchestrator(
+            config,
+            self.trend_strategy,
+            self.mr_strategy,
+            self.smc_strategy
+        )
+
         initial_balance = config["backtest"]["initial_balance"]
         self.risk_manager = RiskManager(config, initial_balance)
         self.executor = MT5Executor(config)
 
-        self.daily_pnls = {pair: 0.0 for pair in self.pairs}
+        self.daily_pnls: Dict[str, float] = {pair: 0.0 for pair in self.pairs}
         self.daily_trades_count = 0
-        self.last_candle_time = None
+        self.last_candle_time: Optional[datetime] = None
 
-    def connect(self):
+    def connect(self) -> bool:
         if not self.executor.connect():
             return False
 
@@ -54,23 +64,7 @@ class LiveBot:
         )
         return True
 
-    def run(self):
-        logger.info("Live bot started")
-
-        while True:
-            try:
-                self._tick()
-                time.sleep(15)
-            except KeyboardInterrupt:
-                logger.info("Bot stopped by user")
-                self.executor.disconnect()
-                break
-            except Exception as e:
-                logger.error(f"Error in live loop: {e}")
-                alert_error(str(e))
-                time.sleep(60)
-
-    def _tick(self):
+    def _tick(self) -> None:
         now = datetime.now()
         time_str = now.strftime("%H:%M")
 
@@ -86,20 +80,19 @@ class LiveBot:
             self.last_candle_time = now.replace(minute=(now.minute // 15) * 15, second=0, microsecond=0)
             self._scan_pairs()
 
-    def run(self):
+    def run(self) -> None:
         logger.info("Live bot started")
 
         while True:
             try:
                 self._tick()
-                # Dynamic polling: check more frequently near candle close
                 now = datetime.now()
                 minute = now.minute
                 seconds_until_next_candle = ((15 - (minute % 15)) * 60) - now.second
                 if seconds_until_next_candle < 60:
-                    time.sleep(5)  # Check every 5s near candle close
+                    time.sleep(5)
                 else:
-                    time.sleep(30)  # Check every 30s otherwise
+                    time.sleep(30)
             except KeyboardInterrupt:
                 logger.info("Bot stopped by user")
                 self.executor.disconnect()
@@ -109,16 +102,16 @@ class LiveBot:
                 alert_error(str(e))
                 time.sleep(60)
 
-    def _is_session_active(self, time_str):
+    def _is_session_active(self, time_str: str) -> bool:
         return self.session_start <= time_str <= self.session_end
 
-    def _is_new_candle(self, now):
+    def _is_new_candle(self, now: datetime) -> bool:
         candle_time = now.replace(minute=(now.minute // 15) * 15, second=0, microsecond=0)
         if self.last_candle_time is None:
             return True
         return candle_time > self.last_candle_time
 
-    def _scan_pairs(self):
+    def _scan_pairs(self) -> None:
         for symbol in self.pairs:
             try:
                 self._scan_pair(symbol)
@@ -126,7 +119,7 @@ class LiveBot:
                 logger.error(f"Error scanning {symbol}: {e}")
                 alert_error(f"Error scanning {symbol}: {str(e)}")
 
-    def _scan_pair(self, symbol):
+    def _scan_pair(self, symbol: str) -> None:
         try:
             end = datetime.now()
             start = end - timedelta(days=90)
@@ -136,11 +129,8 @@ class LiveBot:
             if df is None or df.empty or len(df) < 50:
                 return
 
-            df = self.trend_strategy.compute_indicators(df)
-            df = self.mr_strategy.compute_indicators(df)
-            df = self.smc_strategy.compute_indicators(df)
+            df = self.orchestrator.compute_all_indicators(df)
 
-            # Run regime detection if enabled
             regime = "unknown"
             if self.regime_detector:
                 df = self.regime_detector.detect_regime(df)
@@ -158,38 +148,7 @@ class LiveBot:
             idx = len(df) - 1
             row = df.iloc[idx]
 
-            # Use regime to prioritize strategies
-            regime_config = self.config.get("regime", {})
-            signal = None
-
-            if regime_config.get("enable_regime_filter", False):
-                prefer_trend = regime_config.get("prefer_trend_in_trending", True)
-                prefer_mr = regime_config.get("prefer_mr_in_ranging", True)
-
-                if "trending" in regime and prefer_trend:
-                    signal = self.smc_strategy.generate_signal(df, idx, has_open, regime)
-                    if signal is None:
-                        signal = self.trend_strategy.generate_signal(df, idx, has_open, regime)
-                    if signal is None:
-                        signal = self.mr_strategy.generate_signal(df, idx, has_open, regime)
-                elif ("ranging" in regime or "weak_range" in regime) and prefer_mr:
-                    signal = self.smc_strategy.generate_signal(df, idx, has_open, regime)
-                    if signal is None:
-                        signal = self.mr_strategy.generate_signal(df, idx, has_open, regime)
-                    if signal is None:
-                        signal = self.trend_strategy.generate_signal(df, idx, has_open, regime)
-                else:
-                    signal = self.smc_strategy.generate_signal(df, idx, has_open, regime)
-                    if signal is None:
-                        signal = self.trend_strategy.generate_signal(df, idx, has_open, regime)
-                    if signal is None:
-                        signal = self.mr_strategy.generate_signal(df, idx, has_open, regime)
-            else:
-                signal = self.smc_strategy.generate_signal(df, idx, has_open)
-                if signal is None:
-                    signal = self.trend_strategy.generate_signal(df, idx, has_open)
-                if signal is None:
-                    signal = self.mr_strategy.generate_signal(df, idx, has_open)
+            signal = self.orchestrator.select_signal(df, idx, has_open, regime)
 
             if signal:
                 lot_size = self.risk_manager.calculate_position_size(symbol, row["close"], signal["sl"])

@@ -1,20 +1,23 @@
+from typing import Dict, Any, Tuple
 import pandas as pd
 import numpy as np
 
-class RegimeDetector:
-    def __init__(self, config):
-        self.adx_period = config["regime"]["adx_period"]
-        self.adx_trend = config["regime"]["adx_trend_threshold"]
-        self.adx_range = config["regime"]["adx_range_threshold"]
-        self.chop_period = config["regime"]["choppiness_period"]
-        self.chop_range_thresh = config["regime"]["chop_range_threshold"]
-        self.chop_trend_thresh = config["regime"]["chop_trend_threshold"]
-        self.bb_period = config["regime"]["bb_period"]
-        self.bb_std = config["regime"]["bb_std"]
-        self.confirmation = config["regime"]["confirmation_candles"]
-        self.atr_lookback = config["regime"]["atr_lookback"]
 
-    def compute_atr(self, df, period=None):
+class RegimeDetector:
+    def __init__(self, config: Dict[str, Any]):
+        regime_config = config["regime"]
+        self.adx_period = regime_config["adx_period"]
+        self.adx_trend = regime_config["adx_trend_threshold"]
+        self.adx_range = regime_config["adx_range_threshold"]
+        self.chop_period = regime_config["choppiness_period"]
+        self.chop_range_thresh = regime_config["chop_range_threshold"]
+        self.chop_trend_thresh = regime_config["chop_trend_threshold"]
+        self.bb_period = regime_config["bb_period"]
+        self.bb_std = regime_config["bb_std"]
+        self.confirmation = regime_config["confirmation_candles"]
+        self.atr_lookback = regime_config["atr_lookback"]
+
+    def compute_atr(self, df: pd.DataFrame, period: int = None) -> pd.Series:
         period = period or self.adx_period
         high = df["high"]
         low = df["low"]
@@ -26,7 +29,7 @@ class RegimeDetector:
         atr = tr.rolling(window=period).mean()
         return atr
 
-    def compute_adx(self, df):
+    def compute_adx(self, df: pd.DataFrame) -> pd.Series:
         high = df["high"]
         low = df["low"]
         close = df["close"]
@@ -46,7 +49,7 @@ class RegimeDetector:
 
         return adx
 
-    def compute_choppiness(self, df):
+    def compute_choppiness(self, df: pd.DataFrame) -> pd.Series:
         period = self.chop_period
         atr_1 = self.compute_atr(df, 1)
         atr_sum = atr_1.rolling(window=period).sum()
@@ -54,7 +57,7 @@ class RegimeDetector:
         chop = 100 * np.log10(atr_sum / price_range) / np.log10(period)
         return chop
 
-    def compute_bb_width(self, df):
+    def compute_bb_width(self, df: pd.DataFrame) -> Tuple[pd.Series, pd.Series, pd.Series, pd.Series]:
         period = self.bb_period
         std = self.bb_std
         sma = df["close"].rolling(window=period).mean()
@@ -64,7 +67,7 @@ class RegimeDetector:
         bb_width = (upper - lower) / sma
         return bb_width, upper, lower, sma
 
-    def detect_regime(self, df):
+    def detect_regime(self, df: pd.DataFrame) -> pd.DataFrame:
         adx = self.compute_adx(df)
         chop = self.compute_choppiness(df)
         bb_width, upper, lower, sma = self.compute_bb_width(df)
@@ -78,48 +81,34 @@ class RegimeDetector:
         df["bb_lower"] = lower
         df["bb_sma"] = sma
         df["atr"] = atr
+        df["regime"] = "unknown"
 
-        for i in range(len(df)):
-            if i < self.adx_period * 3:
-                df.loc[df.index[i], "regime"] = "unknown"
-                continue
+        min_idx = self.adx_period * 3
 
-            trend_votes = 0
-            range_votes = 0
+        trend_votes = pd.Series(0, index=df.index)
+        range_votes = pd.Series(0, index=df.index)
 
-            if adx.iloc[i] > self.adx_trend:
-                trend_votes += 2
-            elif adx.iloc[i] < self.adx_range:
-                range_votes += 2
-            elif adx.iloc[i] < 25:
-                range_votes += 1
+        trend_votes = trend_votes + np.where(adx > self.adx_trend, 2, 0)
+        range_votes = range_votes + np.where(adx < self.adx_range, 2, 0)
+        range_votes = range_votes + np.where((adx >= self.adx_range) & (adx < 25), 1, 0)
 
-            if chop.iloc[i] < self.chop_trend_thresh:
-                trend_votes += 2
-            elif chop.iloc[i] > self.chop_range_thresh:
-                range_votes += 2
-            elif chop.iloc[i] > 50:
-                range_votes += 1
+        trend_votes = trend_votes + np.where(chop < self.chop_trend_thresh, 2, 0)
+        range_votes = range_votes + np.where(chop > self.chop_range_thresh, 2, 0)
+        range_votes = range_votes + np.where((chop <= self.chop_range_thresh) & (chop > 50), 1, 0)
 
-            bb_w = bb_width.iloc[i]
-            lookback_start = max(0, i - self.confirmation * 3)
-            bb_w_hist = bb_width.iloc[lookback_start:i]
-            if len(bb_w_hist) > 0:
-                bb_w_avg = bb_w_hist.mean()
-                if bb_w > bb_w_avg * 1.1:
-                    trend_votes += 1
-                elif bb_w < bb_w_avg * 0.9:
-                    range_votes += 1
+        bb_w_avg = bb_width.rolling(window=self.confirmation * 3).mean()
+        trend_votes = trend_votes + np.where(bb_width > bb_w_avg * 1.1, 1, 0)
+        range_votes = range_votes + np.where(bb_width < bb_w_avg * 0.9, 1, 0)
 
-            if trend_votes >= 3:
-                regime = "trending"
-            elif range_votes >= 3:
-                regime = "ranging"
-            elif trend_votes >= range_votes:
-                regime = "weak_trend"
-            else:
-                regime = "weak_range"
+        conditions = [
+            (trend_votes >= 3),
+            (range_votes >= 3),
+            (trend_votes >= range_votes),
+        ]
+        choices = ["trending", "ranging", "weak_trend"]
 
-            df.loc[df.index[i], "regime"] = regime
+        df.loc[df.index[min_idx:], "regime"] = np.select(
+            conditions, choices, default="weak_range"
+        )
 
         return df

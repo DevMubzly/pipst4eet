@@ -2,6 +2,7 @@ import argparse
 import os
 import pandas as pd
 from datetime import datetime, timedelta
+from typing import Dict, Any, Optional
 
 from utils.config import load_config
 from utils.logger import setup_logger
@@ -10,27 +11,34 @@ from data.mock_data import generate_mock_ohlcv
 from strategies.trend_following import TrendFollowingStrategy
 from strategies.mean_reversion import MeanReversionStrategy
 from strategies.smc_sweep import SMCSweepStrategy
+from strategies.base_strategy import NullStrategy
 from risk.manager import RiskManager
 from backtest.engine import BacktestEngine
+from backtest.walkforward import WalkForwardAnalyzer
 from execution.live_bot import LiveBot
 
 logger = setup_logger("bot")
 
-def run_backtest_single(config, symbol, start_date, end_date, use_mock=False, strategy_mode="all"):
+
+def run_backtest_single(
+    config: Dict[str, Any],
+    symbol: str,
+    start_date: str,
+    end_date: str,
+    use_mock: bool = False,
+    strategy_mode: str = "all"
+) -> Optional[Dict[str, Any]]:
     low_tf = config["trading"]["timeframe"]
 
     if use_mock:
         cache_path = f"data/{symbol}_{low_tf}_mock.parquet"
         if os.path.exists(cache_path):
             df = pd.read_parquet(cache_path)
-            data_source = "Mock Data (Cached)"
         else:
             df = generate_mock_ohlcv(symbol, low_tf, start_date, end_date, cache_path)
-            data_source = "Mock Data (Generated)"
     else:
         fetcher = DataFetcher()
         df = fetcher.fetch_and_cache(symbol, low_tf, start_date, end_date)
-        data_source = "Twelve Data API"
 
     if df.empty:
         return None
@@ -47,19 +55,26 @@ def run_backtest_single(config, symbol, start_date, end_date, use_mock=False, st
         engine.run(df, risk, None, trend, mr, smc)
         engine.trades = [t for t in engine.trades if t.reason.startswith("smc")]
     elif strategy_mode == "ema":
-        dummy_smc = type("X", (), {"compute_indicators": lambda s, df: df, "generate_signal": lambda s, df, i, o, h=None: None})()
-        dummy_mr = type("X", (), {"compute_indicators": lambda s, df: df, "generate_signal": lambda s, df, i, o, h=None: None})()
+        dummy_smc = NullStrategy()
+        dummy_mr = NullStrategy()
         engine.run(df, risk, None, trend, dummy_mr, dummy_smc)
     elif strategy_mode == "mr":
-        dummy_smc = type("X", (), {"compute_indicators": lambda s, df: df, "generate_signal": lambda s, df, i, o, h=None: None})()
-        dummy_trend = type("X", (), {"compute_indicators": lambda s, df: df, "generate_signal": lambda s, df, i, o, h=None: None})()
+        dummy_smc = NullStrategy()
+        dummy_trend = NullStrategy()
         engine.run(df, risk, None, dummy_trend, mr, dummy_smc)
     else:
         engine.run(df, risk, None, trend, mr, smc)
 
     return engine.generate_report()
 
-def run_comparison(config, symbol, start_date, end_date, use_mock=False):
+
+def run_comparison(
+    config: Dict[str, Any],
+    symbol: str,
+    start_date: str,
+    end_date: str,
+    use_mock: bool = False
+) -> Dict[str, Dict[str, Any]]:
     print(f"\n{'='*70}")
     print(f"  STRATEGY COMPARISON: {symbol}")
     print(f"  Period: {start_date} to {end_date}")
@@ -81,7 +96,13 @@ def run_comparison(config, symbol, start_date, end_date, use_mock=False):
 
     return results
 
-def run_all_pairs_comparison(config, start_date, end_date, use_mock=False):
+
+def run_all_pairs_comparison(
+    config: Dict[str, Any],
+    start_date: str,
+    end_date: str,
+    use_mock: bool = False
+) -> Dict[str, Dict[str, Dict[str, Any]]]:
     pairs = config["trading"]["pairs"]
     all_results = {}
 
@@ -107,6 +128,7 @@ def run_all_pairs_comparison(config, start_date, end_date, use_mock=False):
     print(f"{'='*70}\n")
 
     return all_results
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Pipst4eet Trading Bot")
@@ -141,3 +163,29 @@ if __name__ == "__main__":
         bot = LiveBot(config)
         if bot.connect():
             bot.run()
+    elif args.mode == "walkforward":
+        end_date = args.end or datetime.now().strftime("%Y-%m-%d")
+        start_date = args.start or (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
+        pairs = [args.symbol] if args.symbol else config["trading"]["pairs"]
+
+        for symbol in pairs:
+            print(f"\n{'='*70}")
+            print(f"  WALK-FORWARD ANALYSIS: {symbol}")
+            print(f"{'='*70}")
+
+            if args.mock:
+                cache_path = f"data/{symbol}_{config['trading']['timeframe']}_mock.parquet"
+                if os.path.exists(cache_path):
+                    df = pd.read_parquet(cache_path)
+                else:
+                    df = generate_mock_ohlcv(symbol, config["trading"]["timeframe"], start_date, end_date, cache_path)
+            else:
+                fetcher = DataFetcher()
+                df = fetcher.fetch_and_cache(symbol, config["trading"]["timeframe"], start_date, end_date)
+
+            if df is None or df.empty:
+                print(f"  No data available for {symbol}")
+                continue
+
+            wf = WalkForwardAnalyzer(config)
+            wf.run(df)

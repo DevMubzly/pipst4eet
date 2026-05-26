@@ -1,8 +1,16 @@
+from typing import Dict, Any, Optional
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 
-def generate_mock_ohlcv(symbol, timeframe, start_date, end_date, save_path=None):
+
+def generate_mock_ohlcv(
+    symbol: str,
+    timeframe: str,
+    start_date: str,
+    end_date: str,
+    save_path: Optional[str] = None
+) -> pd.DataFrame:
     start = pd.Timestamp(start_date)
     end = pd.Timestamp(end_date)
 
@@ -24,7 +32,7 @@ def generate_mock_ohlcv(symbol, timeframe, start_date, end_date, save_path=None)
 
     timestamps = pd.DatetimeIndex(market_hours)
 
-    base_prices = {
+    base_prices: Dict[str, float] = {
         "XAUUSD": 2025.00,
         "EURUSD": 1.0850,
         "GBPUSD": 1.2650,

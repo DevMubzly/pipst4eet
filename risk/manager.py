@@ -1,20 +1,26 @@
-class RiskManager:
-    def __init__(self, config, balance):
-        self.risk_pct = config["risk"]["risk_per_trade_pct"]
-        self.daily_loss_pct = config["risk"]["daily_loss_limit_pct"]
-        self.daily_loss_usd = config["risk"]["daily_loss_limit_usd"]
-        self.max_open = config["risk"]["max_open_positions"]
-        self.max_daily_trades = config["risk"]["max_daily_trades"]
-        self.balance = balance
-        self.daily_pnl = 0.0
-        self.daily_trades = 0
-        self.open_positions = 0
-        self.killed = False
-        self.pair_config = config.get("pair_config", {})
-        self.enable_compounding = config["risk"].get("enable_compounding", False)
-        self.peak_balance = balance
+from typing import Dict, Any, Optional
+from constants import get_pair_config
 
-    def calculate_position_size(self, symbol, entry_price, sl_price):
+
+class RiskManager:
+    def __init__(self, config: Dict[str, Any], balance: float):
+        self.risk_pct: float = config["risk"]["risk_per_trade_pct"]
+        self.daily_loss_pct: Optional[float] = config["risk"]["daily_loss_limit_pct"]
+        self.daily_loss_usd: Optional[float] = config["risk"]["daily_loss_limit_usd"]
+        self.max_open: int = config["risk"]["max_open_positions"]
+        self.max_daily_trades: int = config["risk"]["max_daily_trades"]
+        self.balance: float = balance
+        self.daily_pnl: float = 0.0
+        self.daily_trades: int = 0
+        self.open_positions: int = 0
+        self.killed: bool = False
+        self.pair_config: Dict[str, Dict[str, Any]] = config.get("pair_config", {})
+        self.enable_compounding: bool = config["risk"].get("enable_compounding", False)
+        self.peak_balance: float = balance
+
+    def calculate_position_size(
+        self, symbol: str, entry_price: float, sl_price: float
+    ) -> float:
         risk_amount = self.balance * (self.risk_pct / 100)
         sl_distance = abs(entry_price - sl_price)
 
@@ -33,21 +39,10 @@ class RiskManager:
 
         return lot_size
 
-    def _get_pair_config(self, symbol):
-        if symbol in self.pair_config:
-            return self.pair_config[symbol]
-        # Fallback defaults
-        configs = {
-            "XAUUSD": {"pip_value": 1.0, "pip_size": 0.01, "min_lot": 0.01, "max_lot": 5.0},
-            "EURUSD": {"pip_value": 10.0, "pip_size": 0.0001, "min_lot": 0.01, "max_lot": 100.0},
-            "GBPUSD": {"pip_value": 10.0, "pip_size": 0.0001, "min_lot": 0.01, "max_lot": 100.0},
-            "USDJPY": {"pip_value": 10.0, "pip_size": 0.01, "min_lot": 0.01, "max_lot": 100.0},
-            "GBPJPY": {"pip_value": 10.0, "pip_size": 0.01, "min_lot": 0.01, "max_lot": 100.0},
-            "AUDUSD": {"pip_value": 10.0, "pip_size": 0.0001, "min_lot": 0.01, "max_lot": 100.0},
-        }
-        return configs.get(symbol, {"pip_value": 10.0, "pip_size": 0.0001, "min_lot": 0.01, "max_lot": 100.0})
+    def _get_pair_config(self, symbol: str) -> Dict[str, Any]:
+        return get_pair_config(symbol, self.pair_config)
 
-    def can_open_trade(self):
+    def can_open_trade(self) -> bool:
         if self.killed:
             return False
         if self.open_positions >= self.max_open:
@@ -62,25 +57,24 @@ class RiskManager:
             return False
         return True
 
-    def record_trade_result(self, pnl):
+    def record_trade_result(self, pnl: float) -> None:
         self.daily_pnl += pnl
         self.daily_trades += 1
         self.balance += pnl
 
-        # Update peak balance for compounding
         if self.balance > self.peak_balance:
             self.peak_balance = self.balance
 
         if self.daily_loss_pct and self.daily_pnl <= -(self.balance * self.daily_loss_pct / 100):
             self.killed = True
 
-    def open_position(self):
+    def open_position(self) -> None:
         self.open_positions += 1
 
-    def close_position(self):
+    def close_position(self) -> None:
         self.open_positions = max(0, self.open_positions - 1)
 
-    def reset_daily(self):
+    def reset_daily(self) -> None:
         self.daily_pnl = 0.0
         self.daily_trades = 0
         self.killed = False
