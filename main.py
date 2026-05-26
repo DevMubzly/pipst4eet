@@ -1,12 +1,10 @@
 import argparse
-import os
 import pandas as pd
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional
 
 from utils.config import load_config
 from data.fetcher import DataFetcher
-from data.mock_data import generate_mock_ohlcv
 from strategies.mean_reversion import MeanReversionStrategy
 from risk.manager import RiskManager
 from backtest.engine import BacktestEngine
@@ -18,20 +16,12 @@ def run_backtest_single(
     config: Dict[str, Any],
     symbol: str,
     start_date: str,
-    end_date: str,
-    use_mock: bool = False
+    end_date: str
 ) -> Optional[Dict[str, Any]]:
     low_tf = config["trading"]["timeframe"]
 
-    if use_mock:
-        cache_path = f"data/{symbol}_{low_tf}_mock.parquet"
-        if os.path.exists(cache_path):
-            df = pd.read_parquet(cache_path)
-        else:
-            df = generate_mock_ohlcv(symbol, low_tf, start_date, end_date, cache_path)
-    else:
-        fetcher = DataFetcher()
-        df = fetcher.fetch_and_cache(symbol, low_tf, start_date, end_date)
+    fetcher = DataFetcher()
+    df = fetcher.fetch_and_cache(symbol, low_tf, start_date, end_date)
 
     if df.empty:
         return None
@@ -51,15 +41,14 @@ def run_comparison(
     config: Dict[str, Any],
     symbol: str,
     start_date: str,
-    end_date: str,
-    use_mock: bool = False
+    end_date: str
 ) -> Dict[str, Dict[str, Any]]:
     print(f"\n{'='*70}")
     print(f"  BACKTEST: {symbol}")
     print(f"  Period: {start_date} to {end_date}")
     print(f"{'='*70}")
 
-    r = run_backtest_single(config, symbol, start_date, end_date, use_mock)
+    r = run_backtest_single(config, symbol, start_date, end_date)
 
     if r:
         print(f"\n  {'Strategy':<12} {'Trades':>6} {'Win%':>6} {'PnL':>10} {'DD%':>7} {'PF':>5}")
@@ -73,14 +62,13 @@ def run_comparison(
 def run_all_pairs_comparison(
     config: Dict[str, Any],
     start_date: str,
-    end_date: str,
-    use_mock: bool = False
+    end_date: str
 ) -> Dict[str, Dict[str, Dict[str, Any]]]:
     pairs = config["trading"]["pairs"]
     all_results = {}
 
     for symbol in pairs:
-        results = run_comparison(config, symbol, start_date, end_date, use_mock)
+        results = run_comparison(config, symbol, start_date, end_date)
         all_results[symbol] = results
 
     print("\n" + "="*70)
@@ -128,7 +116,6 @@ if __name__ == "__main__":
     parser.add_argument("--symbol", default=None, help="Single pair to test")
     parser.add_argument("--start", default=None, help="Start date YYYY-MM-DD")
     parser.add_argument("--end", default=None, help="End date YYYY-MM-DD")
-    parser.add_argument("--mock", action="store_true", help="Use mock data")
     args = parser.parse_args()
 
     config = load_config()
@@ -137,16 +124,16 @@ if __name__ == "__main__":
         end_date = args.end or datetime.now().strftime("%Y-%m-%d")
         start_date = args.start or (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
         if args.symbol:
-            run_comparison(config, args.symbol, start_date, end_date, use_mock=args.mock)
+            run_comparison(config, args.symbol, start_date, end_date)
         else:
-            run_all_pairs_comparison(config, start_date, end_date, use_mock=args.mock)
+            run_all_pairs_comparison(config, start_date, end_date)
     elif args.mode == "backtest":
         end_date = args.end or datetime.now().strftime("%Y-%m-%d")
         start_date = args.start or (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
 
         pairs = [args.symbol] if args.symbol else config["trading"]["pairs"]
         for symbol in pairs:
-            r = run_backtest_single(config, symbol, start_date, end_date, use_mock=args.mock)
+            r = run_backtest_single(config, symbol, start_date, end_date)
             if r:
                 print(f"\n{symbol}: WR={r['win_rate']}%, PnL=${r['total_pnl']:.2f}, PF={r['profit_factor']}")
     elif args.mode == "live":
@@ -163,15 +150,8 @@ if __name__ == "__main__":
             print(f"  WALK-FORWARD ANALYSIS: {symbol}")
             print(f"{'='*70}")
 
-            if args.mock:
-                cache_path = f"data/{symbol}_{config['trading']['timeframe']}_mock.parquet"
-                if os.path.exists(cache_path):
-                    df = pd.read_parquet(cache_path)
-                else:
-                    df = generate_mock_ohlcv(symbol, config["trading"]["timeframe"], start_date, end_date, cache_path)
-            else:
-                fetcher = DataFetcher()
-                df = fetcher.fetch_and_cache(symbol, config["trading"]["timeframe"], start_date, end_date)
+            fetcher = DataFetcher()
+            df = fetcher.fetch_and_cache(symbol, config["trading"]["timeframe"], start_date, end_date)
 
             if df is None or df.empty:
                 print(f"  No data available for {symbol}")

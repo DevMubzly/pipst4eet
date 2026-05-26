@@ -42,6 +42,8 @@ class MeanReversionStrategy(BaseStrategy):
         df["bb_lower"] = sma - self.bb_std * std
         df["bb_pct"] = (df["close"] - df["bb_lower"]) / (df["bb_upper"] - df["bb_lower"])
 
+        df["atr"] = self.compute_atr(df, 14)
+
         return df
 
     def generate_signal(
