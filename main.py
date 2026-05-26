@@ -110,9 +110,9 @@ def run_all_pairs_comparison(
         results = run_comparison(config, symbol, start_date, end_date, use_mock)
         all_results[symbol] = results
 
-    print(f"\n{'='*70}")
-    print(f"  AGGREGATE COMPARISON")
-    print(f"{'='*70}")
+    print("\n" + "="*70)
+    print("  AGGREGATE COMPARISON")
+    print("="*70)
     print(f"\n  {'Strategy':<12} {'Trades':>6} {'Win%':>6} {'PnL':>12} {'PF':>5}")
     print(f"  {'-'*12} {'-'*6} {'-'*6} {'-'*12} {'-'*5}")
 
