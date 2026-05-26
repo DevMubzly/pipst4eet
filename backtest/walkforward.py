@@ -3,9 +3,7 @@ import numpy as np
 from typing import Dict, Any, List, Optional
 from backtest.engine import BacktestEngine
 from engine.regime import RegimeDetector
-from strategies.trend_following import TrendFollowingStrategy
 from strategies.mean_reversion import MeanReversionStrategy
-from strategies.smc_sweep import SMCSweepStrategy
 from risk.manager import RiskManager
 
 
@@ -81,9 +79,7 @@ class WalkForwardAnalyzer:
             test_df = w["test_df"]
 
             regime_detector = RegimeDetector(self.config)
-            trend_strategy = TrendFollowingStrategy(self.config)
             mr_strategy = MeanReversionStrategy(self.config)
-            smc_strategy = SMCSweepStrategy(self.config)
 
             initial_balance = self.config["backtest"]["initial_balance"]
             risk_manager = RiskManager(self.config, initial_balance)
@@ -93,9 +89,7 @@ class WalkForwardAnalyzer:
                 test_df,
                 risk_manager,
                 regime_detector,
-                trend_strategy,
-                mr_strategy,
-                smc_strategy
+                mr_strategy
             )
 
             report["window"] = w["num"]

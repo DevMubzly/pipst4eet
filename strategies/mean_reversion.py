@@ -1,5 +1,6 @@
 from typing import Dict, Any, Optional
 import pandas as pd
+import numpy as np
 from strategies.base_strategy import BaseStrategy
 
 

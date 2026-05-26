@@ -132,18 +132,14 @@ class BacktestEngine:
         df: pd.DataFrame,
         risk_manager: RiskManager,
         regime_detector: Optional[RegimeDetector] = None,
-        trend_strategy: Optional[BaseStrategy] = None,
-        mr_strategy: Optional[BaseStrategy] = None,
-        smc_strategy: Optional[BaseStrategy] = None
+        mr_strategy: Optional[BaseStrategy] = None
     ) -> Dict[str, Any]:
         session_start = self.config["trading"]["session_start"]
         session_end = self.config["trading"]["session_end"]
 
         orchestrator = StrategyOrchestrator(
             self.config,
-            trend_strategy or NullStrategy(),
-            mr_strategy or NullStrategy(),
-            smc_strategy or NullStrategy()
+            mr_strategy or NullStrategy()
         )
 
         df = orchestrator.compute_all_indicators(df)

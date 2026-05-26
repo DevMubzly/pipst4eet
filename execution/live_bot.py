@@ -3,14 +3,12 @@ import pandas as pd
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional
 from data.fetcher import DataFetcher
-from strategies.trend_following import TrendFollowingStrategy
 from strategies.mean_reversion import MeanReversionStrategy
-from strategies.smc_sweep import SMCSweepStrategy
 from strategies.strategy_orchestrator import StrategyOrchestrator
 from engine.regime import RegimeDetector
 from risk.manager import RiskManager
 from execution.mt5_executor import MT5Executor
-from utils.notifications import send_message, alert_error, alert_daily_summary
+from utils.notifications import send_message, alert_error
 from utils.logger import setup_logger
 
 logger = setup_logger("live")
@@ -27,16 +25,9 @@ class LiveBot:
 
         self.fetcher = DataFetcher()
         self.regime_detector = RegimeDetector(config) if config.get("regime", {}).get("enable_regime_filter", False) else None
-        self.trend_strategy = TrendFollowingStrategy(config)
         self.mr_strategy = MeanReversionStrategy(config)
-        self.smc_strategy = SMCSweepStrategy(config)
 
-        self.orchestrator = StrategyOrchestrator(
-            config,
-            self.trend_strategy,
-            self.mr_strategy,
-            self.smc_strategy
-        )
+        self.orchestrator = StrategyOrchestrator(config, self.mr_strategy)
 
         initial_balance = config["backtest"]["initial_balance"]
         self.risk_manager = RiskManager(config, initial_balance)
@@ -56,11 +47,12 @@ class LiveBot:
             self.risk_manager.peak_balance = balance
 
         send_message(
-            f"🤖 <b>BOT STARTED</b>\n\n"
-            f"💰 Balance: <b>${balance:.2f}</b>\n"
-            f"📊 Pairs: <code>{', '.join(self.pairs)}</code>\n"
-            f"⏰ Session: {self.session_start} - {self.session_end} UTC+3\n"
-            f"📈 Timeframe: <code>{self.timeframe}</code>"
+            f"<b>BOT STARTED</b>\n\n"
+            f"Balance: <b>${balance:.2f}</b>\n"
+            f"Pairs: <code>{', '.join(self.pairs)}</code>\n"
+            f"Session: {self.session_start} - {self.session_end} UTC+3\n"
+            f"Timeframe: <code>{self.timeframe}</code>\n"
+            f"Strategy: Mean Reversion (RSI + Bollinger)"
         )
         return True
 
