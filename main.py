@@ -6,10 +6,24 @@ from typing import Dict, Any, Optional
 from utils.config import load_config
 from data.fetcher import DataFetcher
 from strategies.mean_reversion import MeanReversionStrategy
+from strategies.trend_pullback import TrendPullbackStrategy
+from strategies.breakout import BreakoutStrategy
+from strategies.scalping import ScalpingStrategy
 from risk.manager import RiskManager
 from backtest.engine import BacktestEngine
 from backtest.walkforward import WalkForwardAnalyzer
 from execution.live_bot import LiveBot
+
+
+def get_strategy(config: Dict[str, Any]):
+    active = config.get("strategy", {}).get("active", "mean_reversion")
+    if active == "trend_pullback":
+        return TrendPullbackStrategy(config)
+    if active == "breakout":
+        return BreakoutStrategy(config)
+    if active == "scalping":
+        return ScalpingStrategy(config)
+    return MeanReversionStrategy(config)
 
 
 def run_backtest_single(
@@ -26,13 +40,13 @@ def run_backtest_single(
     if df.empty:
         return None
 
-    mr = MeanReversionStrategy(config)
+    strategy = get_strategy(config)
 
     initial_balance = config["backtest"]["initial_balance"]
     risk = RiskManager(config, initial_balance)
     engine = BacktestEngine(config)
 
-    engine.run(df, risk, None, mr)
+    engine.run(df, risk, None, strategy)
 
     return engine.generate_report()
 

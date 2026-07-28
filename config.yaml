@@ -1,22 +1,21 @@
 trading:
   pairs:
-    - GBPUSD
-    - USDJPY
-    - XAUUSD
+    - AUDUSD
   timeframe: "15m"
-  session_start: "09:00"
+  session_start: "07:00"
   session_end: "19:00"
-  timezone: "UTC+3"
-  close_positions_before: "18:55"
 
 risk:
   risk_per_trade_pct: 1.0
-  daily_loss_limit_pct: null
+  daily_loss_limit_pct: 3.0
   daily_loss_limit_usd: null
-  max_open_positions: 2
-  max_daily_trades: 50
+  max_open_positions: 1
+  max_daily_trades: 3
   trailing_drawdown_pct: null
   enable_compounding: false
+  max_consecutive_losses: 3
+  skip_after_consecutive_losses: true
+  skip_trades_count: 1
 
 lots:
   EURUSD: 0.01
@@ -75,29 +74,83 @@ regime:
   bb_std: 2.0
   confirmation_candles: 3
   atr_lookback: 14
-  enable_regime_filter: true
+  enable_regime_filter: false
   prefer_trend_in_trending: true
   prefer_mr_in_ranging: true
 
 strategy:
-  mean_reversion:
+  active: "mean_reversion"
+  scalping:
+    fast_ema_period: 9
+    slow_ema_period: 20
+    trend_ema_period: 50
     rsi_period: 14
-    rsi_oversold: 30
-    rsi_overbought: 70
+    rsi_oversold: 42
+    rsi_overbought: 58
+    atr_period: 14
+    atr_multiplier_sl: 0.7
+    atr_multiplier_tp: 1.05
+    min_atr_multiplier: 0.4
+    require_pullback: true
+    pullback_candles: 2
+    require_candle_confirmation: true
+    min_candle_body_ratio: 0.35
+    enable_break_even: true
+    break_even_at_r: 0.6
+    break_even_move_r: 0.3
+
+  mean_reversion:
+    allowed_directions: "both"
+    rsi_period: 14
+    rsi_oversold: 40
+    rsi_overbought: 60
     bb_period: 20
     bb_std: 2.0
-    bb_extreme_threshold: 0.15
+    bb_extreme_threshold: 0.25
     sl_pips: 20
-    tp_pips: 30
+    tp_pips: 40
     use_atr_for_stops: true
-    atr_multiplier_sl: 1.5
-    atr_multiplier_tp: 3.0
-    min_atr_multiplier: 0.8
-    require_momentum_confirmation: true
-    rsi_strength_threshold: 3
+    atr_multiplier_sl: 1.0
+    atr_multiplier_tp: 1.7
+    min_atr_multiplier: 0.7
+    require_momentum_confirmation: false
+    rsi_strength_threshold: 1
     require_bullish_candle_for_buy: false
     require_bearish_candle_for_sell: false
     min_candle_body_ratio: 0.2
+    require_ma_trend_filter: false
+    ma_trend_period: 50
+    enable_trailing_stop: false
+    trailing_start_r: 2.0
+    trailing_step_r: 1.0
+    breakeven_at_r: 0.0
+
+  trend_pullback:
+    fast_ema_period: 20
+    med_ema_period: 50
+    slow_ema_period: 100
+    rsi_period: 14
+    rsi_oversold: 40
+    rsi_overbought: 60
+    atr_multiplier_sl: 1.0
+    atr_multiplier_tp: 1.2
+    min_atr_multiplier: 0.6
+    require_rsi_confirmation: false
+    require_candle_confirmation: true
+    min_candle_body_ratio: 0.3
+
+  breakout:
+    lookback_period: 14
+    atr_multiplier_sl: 1.0
+    atr_multiplier_tp: 1.5
+    rsi_period: 14
+    rsi_oversold: 35
+    rsi_overbought: 65
+    ema_period: 50
+    min_breakout_threshold: 0.0
+    require_trend_confirmation: true
+    require_rsi_confirmation: false
+    min_candle_body_ratio: 0.25
 
 backtest:
   initial_balance: 10000

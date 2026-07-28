@@ -25,6 +25,8 @@ class MeanReversionStrategy(BaseStrategy):
         self.require_bullish_candle = strategy_config.get("require_bullish_candle_for_buy", False)
         self.require_bearish_candle = strategy_config.get("require_bearish_candle_for_sell", False)
         self.min_candle_body_ratio = strategy_config.get("min_candle_body_ratio", 0.3)
+        self.require_ma_trend = strategy_config.get("require_ma_trend_filter", True)
+        self.ma_trend_period = strategy_config.get("ma_trend_period", 50)
 
     def compute_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
@@ -43,6 +45,12 @@ class MeanReversionStrategy(BaseStrategy):
         df["bb_pct"] = (df["close"] - df["bb_lower"]) / (df["bb_upper"] - df["bb_lower"])
 
         df["atr"] = self.compute_atr(df, 14)
+
+        df["ma_trend"] = df["close"].rolling(window=self.ma_trend_period).mean()
+
+        df["prev_high"] = df["high"].shift(1)
+        df["prev_low"] = df["low"].shift(1)
+        df["prev_close"] = df["close"].shift(1)
 
         return df
 
@@ -69,12 +77,18 @@ class MeanReversionStrategy(BaseStrategy):
         if pd.isna(row.get("rsi")) or pd.isna(row.get("bb_pct")):
             return None
 
+        if pd.isna(row.get("ma_trend")):
+            return None
+
         if self.use_atr and pd.notna(row.get("atr")) and pd.notna(row.get("atr_median")):
             if row["atr"] < row["atr_median"] * self.min_atr_mult:
                 return None
 
         symbol = self._get_symbol(df)
         pip = self._pip_size(symbol)
+
+        price_above_ma = row["close"] > row["ma_trend"]
+        price_below_ma = row["close"] < row["ma_trend"]
 
         bb_extreme_low = row["bb_pct"] < self.bb_extreme_threshold
         bb_extreme_high = row["bb_pct"] > (1 - self.bb_extreme_threshold)
@@ -91,10 +105,17 @@ class MeanReversionStrategy(BaseStrategy):
         is_bullish_candle = candle_body > 0 and body_ratio >= self.min_candle_body_ratio
         is_bearish_candle = candle_body < 0 and body_ratio >= self.min_candle_body_ratio
 
+        close_above_prev_high = row["close"] > prev_row["high"]
+        close_below_prev_low = row["close"] < prev_row["low"]
+
         if rsi_cross_up and bb_extreme_low:
+            if not self._direction_allowed("buy", "mean_reversion"):
+                return None
+            if self.require_ma_trend and not price_above_ma:
+                return None
             if self.require_momentum and not rsi_strength_up:
                 return None
-            if self.require_bullish_candle and not is_bullish_candle:
+            if self.require_bullish_candle and not (is_bullish_candle or close_above_prev_high):
                 return None
 
             if self.use_atr and pd.notna(row.get("atr")):
@@ -107,9 +128,13 @@ class MeanReversionStrategy(BaseStrategy):
             return {"direction": "buy", "sl": sl, "tp": tp, "reason": "mr_oversold"}
 
         if rsi_cross_down and bb_extreme_high:
+            if not self._direction_allowed("sell", "mean_reversion"):
+                return None
+            if self.require_ma_trend and not price_below_ma:
+                return None
             if self.require_momentum and not rsi_strength_down:
                 return None
-            if self.require_bearish_candle and not is_bearish_candle:
+            if self.require_bearish_candle and not (is_bearish_candle or close_below_prev_low):
                 return None
 
             if self.use_atr and pd.notna(row.get("atr")):

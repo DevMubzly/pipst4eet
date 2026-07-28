@@ -21,12 +21,18 @@ class Trade:
         reason: str,
         spread_pips: float = 0.5,
         slippage_pips: float = 0.3,
-        pair_config: Optional[Dict[str, Any]] = None
+        pair_config: Optional[Dict[str, Any]] = None,
+        enable_trailing: bool = True,
+        trailing_start_r: float = 1.0,
+        trailing_step_r: float = 0.5,
+        breakeven_at_r: float = 1.5,
     ):
         self.symbol = symbol
         self.direction = direction
         self.entry_price = entry_price
         self.entry_time = entry_time
+        self.initial_sl = sl
+        self.initial_tp = tp
         self.sl = sl
         self.tp = tp
         self.lot_size = lot_size
@@ -41,11 +47,64 @@ class Trade:
         self.slippage_pips = slippage_pips
         self.pair_config = pair_config or {}
 
+        self.enable_trailing = enable_trailing
+        self.trailing_start_r = trailing_start_r
+        self.trailing_step_r = trailing_step_r
+        self.breakeven_at_r = breakeven_at_r
+
+        self.risk_distance = abs(entry_price - sl)
+        self.highest_in_profit = 0.0
+        self.trailing_activated = False
+        self.in_breakeven = False
+
         pip_size = self._pip_size()
         if direction == "buy":
             self.entry_price += (spread_pips / 2 + slippage_pips) * pip_size
         else:
             self.entry_price -= (spread_pips / 2 + slippage_pips) * pip_size
+
+    def _calculate_current_r(self, high: float, low: float) -> float:
+        if self.direction == "buy":
+            profit_distance = high - self.entry_price
+        else:
+            profit_distance = self.entry_price - low
+        
+        if self.risk_distance > 0:
+            return profit_distance / self.risk_distance
+        return 0.0
+
+    def _update_trailing_stop(self, high: float, low: float, close: float):
+        if not self.enable_trailing:
+            return
+
+        current_r = self._calculate_current_r(high, low)
+
+        if self.direction == "buy":
+            current_profit_price = high
+        else:
+            current_profit_price = low
+
+        if current_r > self.highest_in_profit:
+            self.highest_in_profit = current_r
+
+        if not self.in_breakeven and self.breakeven_at_r > 0 and current_r >= self.breakeven_at_r:
+            self.in_breakeven = True
+            if self.direction == "buy":
+                self.sl = self.entry_price
+            else:
+                self.sl = self.entry_price
+
+        if self.trailing_start_r > 0 and self.highest_in_profit >= self.trailing_start_r:
+            self.trailing_activated = True
+
+            if self.direction == "buy":
+                new_sl_from_profit = current_profit_price - (self.trailing_step_r * self.risk_distance)
+                if new_sl_from_profit > self.sl:
+                    self.sl = new_sl_from_profit
+            else:
+                new_sl_from_profit = current_profit_price + (self.trailing_step_r * self.risk_distance)
+                if new_sl_from_profit < self.sl:
+                    self.sl = new_sl_from_profit
 
     def check_exit(
         self, high: float, low: float, close: float, current_time: pd.Timestamp
@@ -53,23 +112,38 @@ class Trade:
         if not self.is_open:
             return None
 
+        self._update_trailing_stop(high, low, close)
+
         pip_size = self._pip_size()
         sl_adjusted = self.sl
-        tp_adjusted = self.tp
+        tp_adjusted = self.tp if self.tp else float('inf') if self.direction == "buy" else float('-inf')
+        
         if self.direction == "buy":
-            tp_adjusted -= (self.spread_pips / 2 + self.slippage_pips) * pip_size
+            if self.tp:
+                tp_adjusted -= (self.spread_pips / 2 + self.slippage_pips) * pip_size
         else:
-            tp_adjusted += (self.spread_pips / 2 + self.slippage_pips) * pip_size
+            if self.tp:
+                tp_adjusted += (self.spread_pips / 2 + self.slippage_pips) * pip_size
 
         if self.direction == "buy":
             if low <= sl_adjusted:
-                self._close(sl_adjusted, current_time, "stop_loss")
-            elif high >= tp_adjusted:
+                if self.in_breakeven and abs(sl_adjusted - self.entry_price) < self.risk_distance * 0.1:
+                    self._close(sl_adjusted, current_time, "breakeven")
+                elif self.trailing_activated:
+                    self._close(sl_adjusted, current_time, "trailing_stop")
+                else:
+                    self._close(sl_adjusted, current_time, "stop_loss")
+            elif self.tp and high >= tp_adjusted:
                 self._close(tp_adjusted, current_time, "take_profit")
         elif self.direction == "sell":
             if high >= sl_adjusted:
-                self._close(sl_adjusted, current_time, "stop_loss")
-            elif low <= tp_adjusted:
+                if self.in_breakeven and abs(sl_adjusted - self.entry_price) < self.risk_distance * 0.1:
+                    self._close(sl_adjusted, current_time, "breakeven")
+                elif self.trailing_activated:
+                    self._close(sl_adjusted, current_time, "trailing_stop")
+                else:
+                    self._close(sl_adjusted, current_time, "stop_loss")
+            elif self.tp and low <= tp_adjusted:
                 self._close(tp_adjusted, current_time, "take_profit")
 
         return self
@@ -183,6 +257,12 @@ class BacktestEngine:
                         if symbol in self.pair_config:
                             spread = self.pair_config[symbol].get("spread_pips", self.spread_pips)
 
+                        mr_config = self.config.get("strategy", {}).get("mean_reversion", {})
+                        enable_trailing = mr_config.get("enable_trailing_stop", True)
+                        trailing_start_r = mr_config.get("trailing_start_r", 1.0)
+                        trailing_step_r = mr_config.get("trailing_step_r", 0.5)
+                        breakeven_at_r = mr_config.get("breakeven_at_r", 1.5)
+
                         trade = Trade(
                             symbol=symbol,
                             direction=signal["direction"],
@@ -194,7 +274,11 @@ class BacktestEngine:
                             reason=signal["reason"],
                             spread_pips=spread,
                             slippage_pips=self.slippage_pips,
-                            pair_config=self.pair_config
+                            pair_config=self.pair_config,
+                            enable_trailing=enable_trailing,
+                            trailing_start_r=trailing_start_r,
+                            trailing_step_r=trailing_step_r,
+                            breakeven_at_r=breakeven_at_r,
                         )
                         self.open_trades.append(trade)
                         risk_manager.open_position()

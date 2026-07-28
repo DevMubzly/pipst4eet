@@ -28,6 +28,17 @@ class BaseStrategy(ABC):
     def _pip_size(self, symbol: str) -> float:
         return get_pip_size(symbol)
 
+    def _direction_allowed(self, direction: str, strategy_name: str) -> bool:
+        strategy_config = self.config.get("strategy", {}).get(strategy_name, {})
+        allowed = strategy_config.get("allowed_directions", "both")
+        if allowed in ("both", "all"):
+            return True
+        if allowed in ("buy_only", "long_only"):
+            return direction == "buy"
+        if allowed in ("sell_only", "short_only"):
+            return direction == "sell"
+        return True
+
     def compute_atr(self, df: pd.DataFrame, period: int = 14) -> pd.Series:
         high = df["high"]
         low = df["low"]
